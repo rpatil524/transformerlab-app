@@ -9,8 +9,8 @@ created CHAR(36) columns (an SQLite compatibility workaround). This migration
 converts those columns to the native UUID type on PostgreSQL. It is a no-op
 for SQLite, which has no native UUID type.
 
-Revision ID: a1b2c3d4e5f6
-Revises: 4937b0e0647c
+Revision ID: 6ccd4a4d9ca1
+Revises: b3c4d5e6f7a8
 Create Date: 2026-02-28 00:00:00.000000
 
 """
@@ -21,8 +21,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, Sequence[str], None] = "4937b0e0647c"
+revision: str = "6ccd4a4d9ca1"
+down_revision: Union[str, Sequence[str], None] = "b3c4d5e6f7a8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
