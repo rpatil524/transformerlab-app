@@ -4,6 +4,7 @@ set -e
 ENV_NAME="transformerlab"
 TLAB_DIR="$HOME/.transformerlab"
 TLAB_CODE_DIR="${TLAB_DIR}/src"
+GENERAL_UV_ENV_DIR="${TLAB_DIR}/envs/general-uv"
 
 MINIFORGE_ROOT=${TLAB_DIR}/miniforge3
 CONDA_BIN=${MINIFORGE_ROOT}/bin/conda
@@ -15,6 +16,10 @@ PORT="8338"
 
 RELOAD=false
 HTTPS=false
+
+# Always execute from the api directory so relative paths and python modules resolve consistently.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
 
 # Load environment variables from .env files
 load_env_files() {
@@ -55,9 +60,9 @@ err_report() {
 
 # trap 'err_report $LINENO' ERR
 
-if ! command -v ${CONDA_BIN} &> /dev/null; then
-    echo "❌ Conda is not installed at ${MINIFORGE_ROOT}. Please run ./install.sh and try again."
-else
+CONDA_AVAILABLE=false
+if command -v ${CONDA_BIN} &> /dev/null; then
+    CONDA_AVAILABLE=true
     echo "✅ Conda is installed."
 fi
 
@@ -79,15 +84,22 @@ done
 # 👏 Using custom environment: ${CUSTOM_ENV}"
 
 if [ "$CUSTOM_ENV" = true ]; then
-    echo "🔧 Using current conda environment, I won't activate for you"
+    echo "🔧 Using currently active environment; run.sh will not activate one for you"
 else
-    # echo "👏 Using default conda environment: ${ENV_DIR}"
-    echo "👏 Enabling conda in shell"
-
-    eval "$(${CONDA_BIN} shell.bash hook)"
-
-    echo "👏 Activating transformerlab conda environment"
-    conda activate "${ENV_DIR}"
+    if [ -x "${GENERAL_UV_ENV_DIR}/bin/python" ]; then
+        echo "👏 Using general uv environment"
+        export PATH="${GENERAL_UV_ENV_DIR}/bin:$PATH"
+        export VIRTUAL_ENV="${GENERAL_UV_ENV_DIR}"
+    elif [ "$CONDA_AVAILABLE" = true ]; then
+        # Fallback for full installs/local-provider-heavy environments.
+        echo "👏 General uv env not found, falling back to transformerlab conda environment"
+        eval "$(${CONDA_BIN} shell.bash hook)"
+        conda activate "${ENV_DIR}"
+    else
+        echo "❌ Neither conda env nor general uv env is available."
+        echo "Run ./install.sh for full install or ./install.sh multiuser_setup for general install."
+        exit 1
+    fi
 fi
 
 # Check if the uvicorn command works:
@@ -102,8 +114,10 @@ fi
 # Check if NVIDIA GPU is available and add necessary paths
 if command -v nvidia-smi &> /dev/null; then
     echo "✅ NVIDIA GPU detected, adding CUDA libraries to path"
-    # Add common NVIDIA library paths
-    export LD_LIBRARY_PATH=${ENV_DIR}/lib:$LD_LIBRARY_PATH
+    # If conda env is active, include its libs. uv-only installs rely on system CUDA paths.
+    if [ -n "${CONDA_PREFIX}" ]; then
+        export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
+    fi
 elif command -v rocminfo &> /dev/null; then
     echo "✅ AMD GPU detected, adding appropriate libraries to path"
     export PATH=$PATH:/opt/rocm/bin:/opt/rocm/rocprofiler/bin:/opt/rocm/opencl/bin
@@ -112,6 +126,12 @@ fi
 
 # Temporary: Turn off python buffering or debug output made by print() may not show up in logs
 export PYTHONUNBUFFERED=1
+
+UVICORN_WORKERS=${TFL_UVICORN_WORKERS:-1}
+
+echo "▶️ Running one-time startup tasks before workers"
+python -m scripts.on_server_start || { echo "❌ Prestart failed"; exit 1; }
+
 
 echo "▶️ Starting the API server:"
 if [ "$RELOAD" = true ]; then
@@ -122,9 +142,13 @@ if [ "$RELOAD" = true ]; then
         uvicorn api:app --reload --port ${PORT} --host ${TLABHOST} --timeout-graceful-shutdown 1
     fi
 else
+    WORKER_ARGS=""
+    if [ "$UVICORN_WORKERS" -gt 1 ]; then
+        WORKER_ARGS="--workers ${UVICORN_WORKERS}"
+    fi
     if [ "$HTTPS" = true ]; then
-        python api.py --https --port ${PORT} --host ${TLABHOST}
+        python api.py --https --port ${PORT} --host ${TLABHOST} ${WORKER_ARGS}
     else
-        uvicorn api:app --port ${PORT} --host ${TLABHOST} --no-access-log
+        uvicorn api:app --port ${PORT} --host ${TLABHOST} --no-access-log ${WORKER_ARGS}
     fi
 fi

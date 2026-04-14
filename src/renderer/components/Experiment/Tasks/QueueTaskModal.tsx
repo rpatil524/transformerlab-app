@@ -25,13 +25,19 @@ import {
   Chip,
 } from '@mui/joy';
 import { Editor } from '@monaco-editor/react';
-import { PlayIcon, AlertTriangleIcon, CheckCircleIcon } from 'lucide-react';
+import {
+  PlayIcon,
+  AlertTriangleIcon,
+  CheckCircleIcon,
+  ChevronDownIcon,
+} from 'lucide-react';
 import { setTheme } from 'renderer/lib/monacoConfig';
 import { useSWRWithAuth as useSWR, useAPI } from 'renderer/lib/authContext';
 import * as chatAPI from 'renderer/lib/transformerlab-api-sdk';
-import { fetcher } from 'renderer/lib/transformerlab-api-sdk';
+import { fetcher, getAPIFullPath } from 'renderer/lib/transformerlab-api-sdk';
 import { useAuth } from 'renderer/lib/authContext';
 import SweepConfigSection from './SweepConfigSection';
+import SafeJSONParse from 'renderer/components/Shared/SafeJSONParse';
 
 type QueueTaskModalProps = {
   open: boolean;
@@ -39,6 +45,7 @@ type QueueTaskModalProps = {
   task: any;
   onSubmit: (config: Record<string, any>) => void;
   isSubmitting?: boolean;
+  experimentId?: string;
 };
 
 // Type definitions for parameter schemas
@@ -87,6 +94,7 @@ export default function QueueTaskModal({
   task,
   onSubmit,
   isSubmitting = false,
+  experimentId = '',
 }: QueueTaskModalProps) {
   const { team } = useAuth();
   const [parameters, setParameters] = React.useState<ProcessedParameter[]>([]);
@@ -103,6 +111,26 @@ export default function QueueTaskModal({
   );
   const [sweepMetric, setSweepMetric] = React.useState('eval/loss');
   const [lowerIsBetter, setLowerIsBetter] = React.useState(true);
+  const [jobSlurmFlags, setJobSlurmFlags] = React.useState<string[]>(['']);
+  const [jobDockerImage, setJobDockerImage] = React.useState('');
+  const [jobRegion, setJobRegion] = React.useState('');
+  const [jobUseSpot, setJobUseSpot] = React.useState(false);
+  const [jobDstackFleetName, setJobDstackFleetName] = React.useState('');
+  const [useTrackio, setUseTrackio] = React.useState(false);
+  const [useProfiling, setUseProfiling] = React.useState(false);
+  const [useProfilingTorch, setUseProfilingTorch] = React.useState(false);
+  const [trackioProjectName, setTrackioProjectName] = React.useState('');
+  const [cpusInput, setCpusInput] = React.useState('');
+  const [memoryInput, setMemoryInput] = React.useState('');
+  const [diskSpaceInput, setDiskSpaceInput] = React.useState('');
+  const [acceleratorsInput, setAcceleratorsInput] = React.useState('');
+  const [numNodesInput, setNumNodesInput] = React.useState('');
+  const [minutesRequestedInput, setMinutesRequestedInput] = React.useState('');
+  const [showResourceOverrides, setShowResourceOverrides] =
+    React.useState(false);
+  const [showParameterOverrides, setShowParameterOverrides] =
+    React.useState(true);
+  const resourceOverridesRef = React.useRef<HTMLDivElement | null>(null);
   const loadingMessages = React.useMemo(
     () => [
       'Contacting compute provider…',
@@ -140,6 +168,18 @@ export default function QueueTaskModal({
     };
   }, [open, isSubmitting, loadingMessages]);
 
+  React.useEffect(() => {
+    if (!showResourceOverrides) {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      resourceOverridesRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      });
+    });
+  }, [showResourceOverrides]);
+
   // Fetch available models and datasets from the API
   const { data: modelsData } = useSWR(
     open ? chatAPI.Endpoints.Models.LocalList() : null,
@@ -149,6 +189,16 @@ export default function QueueTaskModal({
     open ? chatAPI.Endpoints.Dataset.LocalList() : null,
     fetcher,
   );
+
+  // Fetch existing Trackio project names for this experiment (when Trackio enabled)
+  const trackioProjectsKey =
+    open && useTrackio && experimentId
+      ? `${chatAPI.API_URL()}trackio/projects?experiment_id=${encodeURIComponent(experimentId)}`
+      : null;
+  const { data: trackioProjectsData } = useSWR(trackioProjectsKey, fetcher);
+  const trackioProjects: string[] = Array.isArray(trackioProjectsData?.projects)
+    ? trackioProjectsData.projects
+    : [];
 
   // Fetch available providers
   const {
@@ -168,22 +218,88 @@ export default function QueueTaskModal({
     [providers, selectedProviderId],
   );
   const isLocalProvider = selectedProvider?.type === 'local';
+  const isSlurmProvider = selectedProvider?.type === 'slurm';
+  const isSkypilotProvider = selectedProvider?.type === 'skypilot';
+  const isDstackProvider = selectedProvider?.type === 'dstack';
+  const isGalleryImported = Boolean((task as any)?.gallery_import);
 
-  // Fetch server info (local machine resources) when modal is open and local provider selected
-  const { data: serverInfoData } = useSWR(
-    open && isLocalProvider ? chatAPI.Endpoints.ServerInfo.Get() : null,
-    fetcher,
-  );
+  const suggestedGalleryResources = React.useMemo(() => {
+    if (!isGalleryImported) return null;
+
+    const mapping = (task as any)?.supportedAccelerators as
+      | Record<
+          string,
+          { resources?: Record<string, unknown> | undefined } | undefined
+        >
+      | undefined;
+    if (!mapping || typeof mapping !== 'object') return null;
+
+    const providerSupported = selectedProvider?.config?.supported_accelerators;
+    if (!Array.isArray(providerSupported)) return null;
+
+    const providerSupportedLower = providerSupported.map((s: any) =>
+      String(s).toLowerCase(),
+    );
+
+    const priority = ['NVIDIA', 'AMD', 'AppleSilicon', 'cpu'];
+    for (const candidate of priority) {
+      const candidateLower = candidate.toLowerCase();
+      if (!providerSupportedLower.includes(candidateLower)) continue;
+
+      const entry = (mapping as any)[candidate];
+      const resources = entry?.resources;
+      if (!resources || typeof resources !== 'object') continue;
+
+      const accelerators = (resources as any).accelerators;
+      const cpus = (resources as any).cpus;
+      const memory = (resources as any).memory;
+
+      return {
+        category: candidate,
+        accelerators: accelerators ? String(accelerators) : undefined,
+        cpus: cpus ? String(cpus) : undefined,
+        memory: memory ? String(memory) : undefined,
+      };
+    }
+
+    return null;
+  }, [isGalleryImported, selectedProvider, task]);
+
+  // Fetch user-specific provider settings (including default custom SBATCH flags)
+  const slurmUserSettingsKey =
+    open && isSlurmProvider && selectedProviderId
+      ? getAPIFullPath('compute_provider', ['user-settings'], {
+          providerId: selectedProviderId,
+        })
+      : null;
+  const { data: slurmUserSettings } = useSWR(slurmUserSettingsKey, fetcher);
+
+  // Fetch local provider snapshot via the same response type as remote providers (/compute_provider/{id}/clusters).
+  const clustersKey =
+    open && isLocalProvider && selectedProviderId
+      ? getAPIFullPath('compute_provider', ['providerClusters'], {
+          providerId: selectedProviderId,
+        })
+      : null;
+  const { data: providerClustersData } = useSWR(clustersKey, fetcher);
+  const localProviderConfig = React.useMemo(() => {
+    const clusters = Array.isArray(providerClustersData)
+      ? providerClustersData
+      : [];
+    const localCluster =
+      clusters.find(
+        (c: any) => String(c?.backend_type).toLowerCase() === 'local',
+      ) ??
+      clusters[0] ??
+      null;
+    return (localCluster?.provider_data as any) ?? null;
+  }, [providerClustersData]);
 
   // Extract task resource requirements from the task object (must be before isProviderCompatible)
   const taskResources = React.useMemo(() => {
     if (!task) return null;
     const cfg =
-      task.config !== undefined
-        ? typeof task.config === 'string'
-          ? JSON.parse(task.config)
-          : task.config
-        : task;
+      task.config !== undefined ? SafeJSONParse(task.config, task) : task;
 
     let accelerators = cfg.accelerators || task.accelerators || null;
     const cpus = cfg.cpus || task.cpus || null;
@@ -210,15 +326,58 @@ export default function QueueTaskModal({
     return { accelerators, cpus, memory };
   }, [task]);
 
+  const effectiveResources = React.useMemo(() => {
+    if (!taskResources) {
+      const acceleratorsEff =
+        acceleratorsInput?.trim() !== '' ? acceleratorsInput.trim() : null;
+      const cpusEff = cpusInput?.trim() !== '' ? cpusInput.trim() : null;
+      const memoryEff = memoryInput?.trim() !== '' ? memoryInput.trim() : null;
+      if (!acceleratorsEff && !cpusEff && !memoryEff) {
+        return null;
+      }
+      return {
+        accelerators: acceleratorsEff,
+        cpus: cpusEff,
+        memory: memoryEff,
+      };
+    }
+
+    const base = taskResources;
+    const cpusEff =
+      cpusInput.trim() !== '' ? cpusInput.trim() : (base.cpus as any);
+    const memoryEff =
+      memoryInput.trim() !== '' ? memoryInput.trim() : (base.memory as any);
+    const acceleratorsEff =
+      acceleratorsInput.trim() !== ''
+        ? acceleratorsInput.trim()
+        : (base.accelerators as any);
+
+    if (!acceleratorsEff && !cpusEff && !memoryEff) {
+      return null;
+    }
+
+    return {
+      accelerators: acceleratorsEff,
+      cpus: cpusEff,
+      memory: memoryEff,
+    };
+  }, [taskResources, cpusInput, memoryInput, acceleratorsInput]);
+
   // Helper to check if a provider supports requested accelerators
   const isProviderCompatible = React.useCallback(
     (provider: any) => {
-      if (!taskResources || !taskResources.accelerators) return true;
+      // Only enforce accelerator compatibility heuristics for local providers.
+      // Remote providers (Runpod, Skypilot, SLURM, etc.) validate resources on their side.
+      if (provider?.type !== 'local') {
+        return true;
+      }
+
+      if (!effectiveResources || !effectiveResources.accelerators) return true;
 
       const supported = provider.config?.supported_accelerators || [];
       if (supported.length === 0) return true; // Default to compatible if not specified
 
-      const reqAcc = String(taskResources.accelerators).toLowerCase();
+      const reqAcc = String(effectiveResources.accelerators).toLowerCase();
 
       // Check for Apple Silicon
       if (
@@ -258,7 +417,7 @@ export default function QueueTaskModal({
       if (/^\d+$/.test(reqAcc)) {
         if (
           provider.type === 'local' &&
-          serverInfoData?.device_type === 'mps'
+          localProviderConfig?.device === 'mps'
         ) {
           return supported.includes('AppleSilicon');
         }
@@ -267,7 +426,7 @@ export default function QueueTaskModal({
 
       return false;
     },
-    [taskResources, serverInfoData],
+    [effectiveResources, localProviderConfig],
   );
 
   React.useEffect(() => {
@@ -282,7 +441,8 @@ export default function QueueTaskModal({
 
   // Validate local provider resources against task requirements
   const resourceValidation = React.useMemo(() => {
-    if (!isLocalProvider || !serverInfoData || !taskResources) return null;
+    if (!isLocalProvider || !localProviderConfig || !effectiveResources)
+      return null;
 
     const issues: Array<{
       type: 'error' | 'warning';
@@ -292,12 +452,12 @@ export default function QueueTaskModal({
     }> = [];
 
     // Check accelerators / GPU requirement
-    if (taskResources.accelerators) {
-      const accStr = String(taskResources.accelerators);
+    if (effectiveResources.accelerators) {
+      const accStr = String(effectiveResources.accelerators);
       // Parse accelerator spec like "RTX3090:1", "A100:2", "V100:4", or just "1" (count only)
       const match = accStr.match(/^(.+):(\d+)$/);
-      const gpuList: any[] = serverInfoData.gpu || [];
-      const deviceType = serverInfoData.device_type || 'cpu';
+      const gpuList: any[] = localProviderConfig.gpu || [];
+      const deviceType = localProviderConfig.device_type || 'cpu';
 
       if (match) {
         // Named GPU requirement e.g. "RTX3090:1"
@@ -382,7 +542,7 @@ export default function QueueTaskModal({
       hasWarnings,
       isCompatible: issues.length === 0,
     };
-  }, [isLocalProvider, serverInfoData, taskResources]);
+  }, [isLocalProvider, localProviderConfig, effectiveResources]);
 
   // Helper function to parse parameter value and schema
   const parseParameter = (key: string, value: any): ProcessedParameter => {
@@ -423,11 +583,7 @@ export default function QueueTaskModal({
     if (open && task) {
       // Extract parameters from task
       const cfg =
-        task.config !== undefined
-          ? typeof task.config === 'string'
-            ? JSON.parse(task.config)
-            : task.config
-          : task;
+        task.config !== undefined ? SafeJSONParse(task.config, task) : task;
 
       const taskParameters = cfg.parameters || task.parameters || {};
 
@@ -456,7 +612,7 @@ export default function QueueTaskModal({
       if (cfg.sweep_config || task.sweep_config) {
         const sweepCfg =
           typeof cfg.sweep_config === 'string'
-            ? JSON.parse(cfg.sweep_config)
+            ? SafeJSONParse(cfg.sweep_config, cfg.sweep_config)
             : cfg.sweep_config || task.sweep_config;
         setSweepConfig(sweepCfg || {});
       } else {
@@ -474,8 +630,83 @@ export default function QueueTaskModal({
             ? task.lower_is_better
             : true,
       );
+      const initCpus = cfg.cpus ?? task.cpus ?? '';
+      const initMemory = cfg.memory ?? task.memory ?? '';
+      const initDiskSpace = cfg.disk_space ?? task.disk_space ?? '';
+      const initAccelerators = cfg.accelerators ?? task.accelerators ?? '';
+      const initNumNodes = cfg.num_nodes ?? task.num_nodes ?? '';
+      const initMinutesRequested =
+        cfg.minutes_requested ?? task.minutes_requested ?? '';
+
+      setCpusInput(
+        initCpus !== null && initCpus !== undefined ? String(initCpus) : '',
+      );
+      setMemoryInput(
+        initMemory !== null && initMemory !== undefined
+          ? String(initMemory)
+          : '',
+      );
+      setDiskSpaceInput(
+        initDiskSpace !== null && initDiskSpace !== undefined
+          ? String(initDiskSpace)
+          : '',
+      );
+      setAcceleratorsInput(
+        initAccelerators !== null && initAccelerators !== undefined
+          ? String(initAccelerators)
+          : '',
+      );
+      setNumNodesInput(
+        initNumNodes !== null && initNumNodes !== undefined
+          ? String(initNumNodes)
+          : '',
+      );
+      setMinutesRequestedInput(
+        initMinutesRequested !== null && initMinutesRequested !== undefined
+          ? String(initMinutesRequested)
+          : '',
+      );
     }
   }, [open, task, providers]);
+
+  // When opening for a SLURM provider, initialize job flags from the user's
+  // saved per-provider defaults so they can be edited for this run.
+  React.useEffect(() => {
+    if (!open || !isSlurmProvider || !slurmUserSettings) return;
+    const raw = (slurmUserSettings as any).custom_sbatch_flags || '';
+    const lines = String(raw)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    setJobSlurmFlags(lines.length > 0 ? lines : ['']);
+  }, [open, isSlurmProvider, selectedProviderId, slurmUserSettings]);
+
+  // Initialize SkyPilot per-job defaults from provider config when a SkyPilot provider is selected.
+  React.useEffect(() => {
+    if (!open || !isSkypilotProvider || !selectedProvider) return;
+    const cfg = selectedProvider.config || {};
+    setJobDockerImage(cfg.docker_image || '');
+    setJobRegion(cfg.default_region || '');
+    setJobUseSpot(cfg.use_spot === true);
+  }, [open, isSkypilotProvider, selectedProviderId, selectedProvider]);
+
+  // Initialize dstack per-job defaults from provider/task config when selected.
+  React.useEffect(() => {
+    if (!open || !isDstackProvider || !selectedProvider) return;
+    const providerCfg = selectedProvider.config || {};
+    const taskCfg =
+      task?.config !== undefined ? SafeJSONParse(task.config, {}) : {};
+    const taskRunCfg = taskCfg?.config || {};
+    const taskResourcesCfg = taskRunCfg?.resources || {};
+    setJobDstackFleetName(
+      String(
+        taskRunCfg.fleet_name ||
+          taskResourcesCfg.fleet_name ||
+          providerCfg.fleet_name ||
+          '',
+      ),
+    );
+  }, [open, isDstackProvider, selectedProviderId, selectedProvider, task]);
 
   // Helper function to validate constraints
   const validateParameter = (param: ProcessedParameter): string | null => {
@@ -554,6 +785,59 @@ export default function QueueTaskModal({
       config.provider_name = provider.name;
     }
 
+    if (cpusInput.trim()) {
+      config.cpus = cpusInput.trim();
+    }
+    if (memoryInput.trim()) {
+      config.memory = memoryInput.trim();
+    }
+    if (diskSpaceInput.trim()) {
+      config.disk_space = diskSpaceInput.trim();
+    }
+    if (acceleratorsInput.trim()) {
+      config.accelerators = acceleratorsInput.trim();
+    }
+    if (numNodesInput.trim()) {
+      const parsedNumNodes = Number(numNodesInput.trim());
+      config.num_nodes = Number.isNaN(parsedNumNodes)
+        ? numNodesInput.trim()
+        : parsedNumNodes;
+    }
+    if (minutesRequestedInput.trim()) {
+      const parsedMinutes = Number(minutesRequestedInput.trim());
+      if (!Number.isNaN(parsedMinutes) && parsedMinutes > 0) {
+        config.minutes_requested = parsedMinutes;
+      }
+    }
+
+    // For SLURM providers, add optional per-job SBATCH flags override
+    if (provider?.type === 'slurm') {
+      const lines = jobSlurmFlags
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+      if (lines.length > 0) {
+        config.custom_sbatch_flags = lines.join('\n');
+      }
+    }
+
+    // For SkyPilot providers, add optional per-job overrides
+    if (provider?.type === 'skypilot') {
+      if (jobDockerImage.trim()) {
+        config.docker_image = jobDockerImage.trim();
+      }
+      if (jobRegion.trim()) {
+        config.region = jobRegion.trim();
+      }
+      if (jobUseSpot) {
+        config.use_spot = true;
+      }
+    }
+
+    // For dstack providers, allow per-run fleet override.
+    if (provider?.type === 'dstack' && jobDstackFleetName.trim()) {
+      config.fleet_name = jobDstackFleetName.trim();
+    }
+
     // Add sweep configuration if enabled
     if (runSweeps) {
       config.run_sweeps = true;
@@ -562,6 +846,22 @@ export default function QueueTaskModal({
       }
       config.sweep_metric = sweepMetric;
       config.lower_is_better = lowerIsBetter;
+    }
+
+    // Trackio auto-init flag: when enabled, backend will set TLAB_TRACKIO_AUTO_INIT
+    // in the job environment so Lab can automatically integrate with Trackio.
+    if (useTrackio) {
+      config.enable_trackio = true;
+      config.trackio_project_name = trackioProjectName.trim() || undefined;
+    }
+
+    // Profiling: when enabled, backend will set _TFL_PROFILING=1 so tfl-remote-trap
+    // samples CPU/GPU/memory during the job and writes profiling_report.json.
+    if (useProfiling) {
+      config.enable_profiling = true;
+      if (useProfilingTorch) {
+        config.enable_profiling_torch = true;
+      }
     }
 
     onSubmit(config);
@@ -631,6 +931,7 @@ export default function QueueTaskModal({
                 setParameters(newParams);
               }}
               sx={{ flex: 1 }}
+              disabled={isSubmitting}
             />
           ) : (
             <Select
@@ -642,6 +943,7 @@ export default function QueueTaskModal({
               }}
               placeholder="Select a model"
               sx={{ flex: 1 }}
+              disabled={isSubmitting}
             >
               {models.map((model: any) => (
                 <Option key={model.model_id} value={model.model_id}>
@@ -674,6 +976,7 @@ export default function QueueTaskModal({
                 }
               }}
               size="sm"
+              disabled={isSubmitting}
             />
             <Typography level="body-xs" sx={{ color: 'neutral.500' }}>
               Enter any string
@@ -699,6 +1002,7 @@ export default function QueueTaskModal({
                 setParameters(newParams);
               }}
               sx={{ flex: 1 }}
+              disabled={isSubmitting}
             />
           ) : (
             <Select
@@ -710,6 +1014,7 @@ export default function QueueTaskModal({
               }}
               placeholder="Select a dataset"
               sx={{ flex: 1 }}
+              disabled={isSubmitting}
             >
               {datasets.map((dataset: any) => (
                 <Option key={dataset.dataset_id} value={dataset.dataset_id}>
@@ -742,6 +1047,7 @@ export default function QueueTaskModal({
                 }
               }}
               size="sm"
+              disabled={isSubmitting}
             />
             <Typography level="body-xs" sx={{ color: 'neutral.500' }}>
               Enter any string
@@ -780,6 +1086,7 @@ export default function QueueTaskModal({
               step={step}
               valueLabelDisplay="auto"
               sx={{ flex: 1 }}
+              disabled={isSubmitting}
             />
             <Input
               value={param.value}
@@ -799,6 +1106,7 @@ export default function QueueTaskModal({
               }}
               sx={{ width: 100 }}
               error={!!validationErrors[index]}
+              disabled={isSubmitting}
             />
           </Stack>
           {validationErrors[index] && (
@@ -823,6 +1131,7 @@ export default function QueueTaskModal({
             newParams[index].value = e.target.checked;
             setParameters(newParams);
           }}
+          disabled={isSubmitting}
         />
       );
     }
@@ -843,7 +1152,12 @@ export default function QueueTaskModal({
           >
             <Stack direction="row" spacing={2}>
               {options.map((option) => (
-                <Radio key={option} value={option} label={option} />
+                <Radio
+                  key={option}
+                  value={option}
+                  label={option}
+                  disabled={isSubmitting}
+                />
               ))}
             </Stack>
           </RadioGroup>
@@ -859,6 +1173,7 @@ export default function QueueTaskModal({
               setParameters(newParams);
             }}
             sx={{ flex: 1 }}
+            disabled={isSubmitting}
           >
             {options.map((option) => (
               <Option key={option} value={option}>
@@ -902,6 +1217,7 @@ export default function QueueTaskModal({
             }}
             sx={{ flex: 1 }}
             error={!!validationErrors[index]}
+            disabled={isSubmitting}
           />
           {validationErrors[index] && (
             <FormHelperText sx={{ color: 'danger.400' }}>
@@ -924,6 +1240,7 @@ export default function QueueTaskModal({
             setParameters(newParams);
           }}
           sx={{ flex: 1 }}
+          disabled={isSubmitting}
         />
       );
     }
@@ -956,6 +1273,7 @@ export default function QueueTaskModal({
             fontSize: 12,
             lineNumbers: 'off',
             wordWrap: 'on',
+            readOnly: isSubmitting,
           }}
         />
       );
@@ -972,6 +1290,7 @@ export default function QueueTaskModal({
           setParameters(newParams);
         }}
         sx={{ flex: 1 }}
+        disabled={isSubmitting}
       />
     );
   };
@@ -995,7 +1314,7 @@ export default function QueueTaskModal({
             <Stack spacing={2}>
               <Typography level="title-sm">Run Settings</Typography>
               <FormControl required>
-                <FormLabel>Provider</FormLabel>
+                <FormLabel>Compute Provider</FormLabel>
                 <Select
                   placeholder={
                     providers.length
@@ -1041,140 +1360,282 @@ export default function QueueTaskModal({
                 </FormHelperText>
               </FormControl>
 
-              {/* Incompatibility Warning */}
-              {selectedProvider &&
-                taskResources?.accelerators &&
-                !isProviderCompatible(selectedProvider) && (
-                  <Alert
-                    variant="soft"
-                    color="warning"
-                    startDecorator={<AlertTriangleIcon size={18} />}
-                    sx={{ mt: 1 }}
-                  >
-                    <Typography level="body-sm">
-                      This provider may not support the requested accelerators (
-                      <strong>{taskResources.accelerators}</strong>).
+              {isGalleryImported && (
+                <Alert
+                  variant="soft"
+                  color="warning"
+                  startDecorator={<AlertTriangleIcon size={18} />}
+                  sx={{ mt: 1 }}
+                >
+                  <Typography level="body-sm">
+                    This task was imported from the gallery. Please make sure
+                    the selected resources for this task match the
+                    provider&apos;s availability.
+                  </Typography>
+                  {suggestedGalleryResources && (
+                    <Typography level="body-xs" sx={{ mt: 1 }}>
+                      Suggested ({suggestedGalleryResources.category}):{' '}
+                      {[
+                        suggestedGalleryResources.accelerators &&
+                          `accelerators=${suggestedGalleryResources.accelerators}`,
+                        suggestedGalleryResources.cpus &&
+                          `cpus=${suggestedGalleryResources.cpus}`,
+                        suggestedGalleryResources.memory &&
+                          `memory=${suggestedGalleryResources.memory}`,
+                      ]
+                        .filter(Boolean)
+                        .join(', ')}
                     </Typography>
-                  </Alert>
-                )}
-
-              {/* Local Provider Resource Validation */}
-              {isLocalProvider &&
-                resourceValidation &&
-                !resourceValidation.isCompatible && (
-                  <Alert
-                    variant="soft"
-                    color={resourceValidation.hasErrors ? 'danger' : 'warning'}
-                    startDecorator={<AlertTriangleIcon size={18} />}
-                    sx={{ mt: 1 }}
-                  >
-                    <Stack spacing={1}>
-                      <Typography
-                        level="title-sm"
-                        color={
-                          resourceValidation.hasErrors ? 'danger' : 'warning'
+                  )}
+                  <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                    <Button
+                      size="sm"
+                      variant="plain"
+                      color="warning"
+                      onClick={() => {
+                        if (!showResourceOverrides) {
+                          setShowResourceOverrides(true);
+                          return;
                         }
-                      >
-                        {resourceValidation.hasErrors
-                          ? 'Local provider cannot meet task requirements'
-                          : 'Local provider may not meet task requirements'}
-                      </Typography>
-                      <Stack spacing={0.5}>
-                        {resourceValidation.issues.map((issue, idx) => (
-                          <Stack
-                            key={idx}
-                            direction="row"
-                            spacing={1}
-                            alignItems="center"
-                          >
-                            <Chip
-                              size="sm"
-                              variant="solid"
-                              color={
-                                issue.type === 'error' ? 'danger' : 'warning'
-                              }
-                            >
-                              {issue.label}
-                            </Chip>
-                            <Typography level="body-xs">
-                              Required: <strong>{issue.required}</strong> —
-                              Available: <strong>{issue.available}</strong>
-                            </Typography>
-                          </Stack>
-                        ))}
-                      </Stack>
-                      {resourceValidation.hasErrors && (
-                        <Typography level="body-xs" color="danger">
-                          Consider selecting a different provider with the
-                          required resources.
-                        </Typography>
-                      )}
-                    </Stack>
-                  </Alert>
-                )}
+                        resourceOverridesRef.current?.scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'nearest',
+                        });
+                      }}
+                      disabled={isSubmitting}
+                    >
+                      Review resources
+                    </Button>
+                  </Stack>
+                </Alert>
+              )}
 
-              {isLocalProvider &&
-                resourceValidation?.isCompatible &&
-                taskResources && (
-                  <Alert
-                    variant="soft"
-                    color="success"
-                    startDecorator={<CheckCircleIcon size={18} />}
-                    sx={{ mt: 1 }}
-                  >
-                    <Typography level="body-sm" color="success">
-                      Local provider meets the task resource requirements.
-                    </Typography>
-                  </Alert>
-                )}
+              {/* SLURM per-job SBATCH flags */}
+              {isSlurmProvider && (
+                <FormControl>
+                  <FormLabel>Job-specific SBATCH flags (optional)</FormLabel>
+                  <Stack gap={1}>
+                    {jobSlurmFlags.map((value, idx) => (
+                      <Stack
+                        key={idx}
+                        direction="row"
+                        alignItems="center"
+                        gap={1}
+                      >
+                        <Input
+                          placeholder={
+                            idx === 0 ? '--time=4:00:00' : '--ntasks-per-node=4'
+                          }
+                          sx={{ fontFamily: 'monospace', fontSize: 'sm' }}
+                          value={value}
+                          onChange={(e) => {
+                            const next = [...jobSlurmFlags];
+                            next[idx] = e.target.value;
+                            setJobSlurmFlags(next);
+                          }}
+                          disabled={isSubmitting}
+                        />
+                        {jobSlurmFlags.length > 1 && (
+                          <Button
+                            size="sm"
+                            variant="outlined"
+                            color="neutral"
+                            onClick={() => {
+                              const next = jobSlurmFlags.filter(
+                                (_, i) => i !== idx,
+                              );
+                              setJobSlurmFlags(next.length > 0 ? next : ['']);
+                            }}
+                            disabled={isSubmitting}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </Stack>
+                    ))}
+                    <Button
+                      size="sm"
+                      variant="outlined"
+                      onClick={() => setJobSlurmFlags((prev) => [...prev, ''])}
+                      disabled={isSubmitting}
+                    >
+                      Add flag for this job
+                    </Button>
+                  </Stack>
+                  <FormHelperText>
+                    These flags apply only to this queued run and are added as
+                    #SBATCH directives in the SLURM script. They start from your
+                    defaults in User Settings → Provider Settings, but edits
+                    here affect this run only. Examples: --time=4:00:00,
+                    --ntasks-per-node=4.
+                  </FormHelperText>
+                </FormControl>
+              )}
             </Stack>
 
             <Divider />
 
             {/* Task Parameters Section */}
             <Stack spacing={2}>
-              <Typography level="title-sm">Task Parameters</Typography>
-              {parameters.length === 0 ||
-              (parameters.length === 1 &&
-                !parameters[0].key &&
-                !parameters[0].value) ? (
-                <Typography level="body-sm" color="neutral">
-                  This task has no parameters defined. Click Submit to queue
-                  with default configuration.
-                </Typography>
-              ) : (
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ cursor: isSubmitting ? 'default' : 'pointer' }}
+                onClick={() => {
+                  if (!isSubmitting) {
+                    setShowParameterOverrides((prev) => !prev);
+                  }
+                }}
+              >
+                <Typography level="title-sm">Parameter overrides</Typography>
+                <ChevronDownIcon
+                  size={18}
+                  style={{
+                    transform: showParameterOverrides
+                      ? 'rotate(180deg)'
+                      : 'rotate(0deg)',
+                    transition: 'transform 0.2s ease',
+                  }}
+                />
+              </Stack>
+              {showParameterOverrides && (
                 <Stack spacing={2}>
-                  {parameters.map((param, index) => {
-                    const schema = param.schema;
-                    const label = schema?.title || param.key;
+                  {parameters.length === 0 ||
+                  (parameters.length === 1 &&
+                    !parameters[0].key &&
+                    !parameters[0].value) ? (
+                    <Typography level="body-sm" color="neutral">
+                      This task has no parameters defined. Click Submit to queue
+                      with default configuration.
+                    </Typography>
+                  ) : (
+                    <Stack spacing={2}>
+                      {parameters.map((param, index) => {
+                        const schema = param.schema;
+                        const label = schema?.title || param.key;
 
-                    return (
-                      <FormControl
-                        key={param.key || index}
-                        sx={{ width: '100%' }}
-                      >
-                        <Stack
-                          direction="row"
-                          spacing={2}
-                          alignItems="center"
-                          sx={{ width: '100%' }}
-                        >
-                          <FormLabel
-                            sx={{ alignSelf: 'center', minWidth: 160 }}
+                        return (
+                          <FormControl
+                            key={param.key || index}
+                            sx={{ width: '100%' }}
                           >
-                            {label}:
-                          </FormLabel>
-                          {renderParameterInput(param, index)}
-                        </Stack>
-                      </FormControl>
-                    );
-                  })}
+                            <Stack
+                              direction="row"
+                              spacing={2}
+                              alignItems="center"
+                              sx={{ width: '100%' }}
+                            >
+                              <FormLabel
+                                sx={{ alignSelf: 'center', minWidth: 160 }}
+                              >
+                                {label}:
+                              </FormLabel>
+                              {renderParameterInput(param, index)}
+                            </Stack>
+                          </FormControl>
+                        );
+                      })}
+                    </Stack>
+                  )}
+                  <Typography level="body-sm" color="neutral">
+                    Parameters can be accessed in your task script using{' '}
+                    <code>lab.get_config()</code>
+                  </Typography>
                 </Stack>
               )}
-              <Typography level="body-sm" color="neutral">
-                Parameters can be accessed in your task script using{' '}
-                <code>lab.get_config()</code>
-              </Typography>
+            </Stack>
+
+            <Divider />
+
+            {/* Tracking Section */}
+            <Stack spacing={2}>
+              <Typography level="title-sm">Tracking</Typography>
+              <FormControl
+                orientation="horizontal"
+                sx={{ alignItems: 'center' }}
+              >
+                <Checkbox
+                  checked={useTrackio}
+                  onChange={(e) => setUseTrackio(e.target.checked)}
+                  disabled={isSubmitting}
+                />
+                <FormLabel sx={{ ml: 1 }}>
+                  Enable Trackio metrics tracking for this run
+                </FormLabel>
+              </FormControl>
+              {useTrackio && (
+                <FormControl>
+                  <FormLabel>Project name</FormLabel>
+                  <Input
+                    placeholder="e.g. my-finetune-project"
+                    value={trackioProjectName}
+                    onChange={(e) => setTrackioProjectName(e.target.value)}
+                    disabled={isSubmitting}
+                    slotProps={{
+                      input: {
+                        list: 'trackio-projects-list',
+                      },
+                    }}
+                  />
+                  <datalist id="trackio-projects-list">
+                    {trackioProjects.map((p) => (
+                      <option key={p} value={p} />
+                    ))}
+                  </datalist>
+                  <FormHelperText>
+                    Pick an existing project to add this run to it, or type a
+                    new name to create one.
+                  </FormHelperText>
+                </FormControl>
+              )}
+              <FormHelperText>
+                When enabled, the scripts that use the lab SDK can automatically
+                log metrics to Trackio and expose a Trackio dashboard in the UI.
+              </FormHelperText>
+            </Stack>
+
+            <Divider />
+
+            {/* Profiling Section */}
+            <Stack spacing={2}>
+              <Typography level="title-sm">Profiling</Typography>
+              <FormControl
+                orientation="horizontal"
+                sx={{ alignItems: 'center' }}
+              >
+                <Checkbox
+                  checked={useProfiling}
+                  onChange={(e) => {
+                    setUseProfiling(e.target.checked);
+                    if (!e.target.checked) setUseProfilingTorch(false);
+                  }}
+                  disabled={isSubmitting}
+                />
+                <FormLabel sx={{ ml: 1 }}>
+                  Enable CPU &amp; GPU profiling for this run
+                </FormLabel>
+              </FormControl>
+              <FormHelperText>
+                Samples CPU%, memory, and GPU utilization every few seconds
+                during the job. Results are available in the Profiling tab after
+                the job completes.
+              </FormHelperText>
+              {useProfiling && (
+                <FormControl
+                  orientation="horizontal"
+                  sx={{ alignItems: 'center', ml: 3 }}
+                >
+                  <Checkbox
+                    checked={useProfilingTorch}
+                    onChange={(e) => setUseProfilingTorch(e.target.checked)}
+                    disabled={isSubmitting}
+                  />
+                  <FormLabel sx={{ ml: 1 }}>
+                    Also capture PyTorch op-level trace (Chrome trace format)
+                  </FormLabel>
+                </FormControl>
+              )}
             </Stack>
 
             <Divider />
@@ -1190,7 +1651,275 @@ export default function QueueTaskModal({
               lowerIsBetter={lowerIsBetter}
               onLowerIsBetterChange={setLowerIsBetter}
               parameters={parameters}
+              disabled={isSubmitting}
             />
+
+            {/* Optional Resource Overrides Section */}
+            <Divider />
+            <Stack spacing={1}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ cursor: isSubmitting ? 'default' : 'pointer' }}
+                onClick={() => {
+                  if (!isSubmitting) {
+                    setShowResourceOverrides((prev) => !prev);
+                  }
+                }}
+              >
+                <Typography level="title-sm">
+                  Optional resource overrides
+                </Typography>
+                <ChevronDownIcon
+                  size={18}
+                  style={{
+                    transform: showResourceOverrides
+                      ? 'rotate(180deg)'
+                      : 'rotate(0deg)',
+                    transition: 'transform 0.2s ease',
+                  }}
+                />
+              </Stack>
+              {showResourceOverrides && (
+                <Stack spacing={2} ref={resourceOverridesRef}>
+                  <Stack direction="row" spacing={2}>
+                    <FormControl sx={{ flex: 1 }}>
+                      <FormLabel>CPUs</FormLabel>
+                      <Input
+                        placeholder="e.g. 4"
+                        value={cpusInput}
+                        onChange={(e) => setCpusInput(e.target.value)}
+                        disabled={isSubmitting}
+                      />
+                    </FormControl>
+                    <FormControl sx={{ flex: 1 }}>
+                      <FormLabel>Memory</FormLabel>
+                      <Input
+                        placeholder="e.g. 16GB"
+                        value={memoryInput}
+                        onChange={(e) => setMemoryInput(e.target.value)}
+                        disabled={isSubmitting}
+                      />
+                    </FormControl>
+                  </Stack>
+                  <Stack direction="row" spacing={2}>
+                    <FormControl sx={{ flex: 1 }}>
+                      <FormLabel>Disk space</FormLabel>
+                      <Input
+                        placeholder="e.g. 100GB"
+                        value={diskSpaceInput}
+                        onChange={(e) => setDiskSpaceInput(e.target.value)}
+                        disabled={isSubmitting}
+                      />
+                    </FormControl>
+                    <FormControl sx={{ flex: 1 }}>
+                      <FormLabel>Accelerators</FormLabel>
+                      <Input
+                        placeholder="e.g. A100:1, RTX3090:2, 1"
+                        value={acceleratorsInput}
+                        onChange={(e) => setAcceleratorsInput(e.target.value)}
+                        disabled={isSubmitting}
+                      />
+                    </FormControl>
+                  </Stack>
+                  <Stack direction="row" spacing={2}>
+                    <FormControl sx={{ flex: 1 }}>
+                      <FormLabel>Num nodes</FormLabel>
+                      <Input
+                        placeholder="e.g. 1"
+                        value={numNodesInput}
+                        onChange={(e) => setNumNodesInput(e.target.value)}
+                        disabled={isSubmitting}
+                      />
+                    </FormControl>
+                    <FormControl sx={{ flex: 1 }}>
+                      <FormLabel>Minutes requested</FormLabel>
+                      <Input
+                        type="number"
+                        placeholder="e.g. 60"
+                        value={minutesRequestedInput}
+                        onChange={(e) =>
+                          setMinutesRequestedInput(e.target.value)
+                        }
+                        disabled={isSubmitting}
+                      />
+                    </FormControl>
+                  </Stack>
+                  <FormHelperText>
+                    These values override the template&apos;s resource
+                    requirements for this run only. Leave a field empty to use
+                    the template default.
+                  </FormHelperText>
+
+                  {/* SkyPilot per-job overrides */}
+                  {isSkypilotProvider && (
+                    <>
+                      <Divider />
+                      <Typography level="title-sm">
+                        SkyPilot Job Overrides
+                      </Typography>
+                      <FormControl>
+                        <FormLabel>Docker Image (optional)</FormLabel>
+                        <Input
+                          value={jobDockerImage}
+                          onChange={(e) => setJobDockerImage(e.target.value)}
+                          placeholder="docker:nvcr.io/nvidia/pytorch:23.10-py3"
+                          sx={{ fontFamily: 'monospace', fontSize: 'sm' }}
+                          disabled={isSubmitting}
+                        />
+                        <FormHelperText>
+                          Prefix with &quot;docker:&quot; to run inside a
+                          container. Defaults to the provider&apos;s global
+                          setting.
+                        </FormHelperText>
+                      </FormControl>
+                      <FormControl>
+                        <FormLabel>Region (optional)</FormLabel>
+                        <Input
+                          value={jobRegion}
+                          onChange={(e) => setJobRegion(e.target.value)}
+                          placeholder="e.g. us-east-1"
+                          disabled={isSubmitting}
+                        />
+                      </FormControl>
+                      <FormControl
+                        sx={{ flexDirection: 'row', alignItems: 'center' }}
+                      >
+                        <Switch
+                          checked={jobUseSpot}
+                          onChange={(e) => setJobUseSpot(e.target.checked)}
+                          disabled={isSubmitting}
+                          sx={{ mr: 1 }}
+                        />
+                        <FormLabel sx={{ m: 0 }}>
+                          Use Spot / Preemptible Instances
+                        </FormLabel>
+                      </FormControl>
+                    </>
+                  )}
+
+                  {/* dstack per-job overrides */}
+                  {isDstackProvider && (
+                    <>
+                      <Divider />
+                      <Typography level="title-sm">
+                        dstack Job Overrides
+                      </Typography>
+                      <FormControl>
+                        <FormLabel>Fleet Name (optional)</FormLabel>
+                        <Input
+                          value={jobDstackFleetName}
+                          onChange={(e) =>
+                            setJobDstackFleetName(e.target.value)
+                          }
+                          placeholder="my-fleet"
+                          disabled={isSubmitting}
+                        />
+                        <FormHelperText>
+                          If set, this run is scheduled on the specified dstack
+                          fleet. Leave empty to use resource-based scheduling.
+                        </FormHelperText>
+                      </FormControl>
+                    </>
+                  )}
+
+                  {/* Incompatibility Warning */}
+                  {selectedProvider &&
+                    effectiveResources?.accelerators &&
+                    !isProviderCompatible(selectedProvider) && (
+                      <Alert
+                        variant="soft"
+                        color="warning"
+                        startDecorator={<AlertTriangleIcon size={18} />}
+                        sx={{ mt: 1 }}
+                      >
+                        <Typography level="body-sm">
+                          This provider may not support the requested
+                          accelerators (
+                          <strong>{effectiveResources.accelerators}</strong>).
+                        </Typography>
+                      </Alert>
+                    )}
+
+                  {/* Local Provider Resource Validation */}
+                  {isLocalProvider &&
+                    resourceValidation &&
+                    !resourceValidation.isCompatible && (
+                      <Alert
+                        variant="soft"
+                        color={
+                          resourceValidation.hasErrors ? 'danger' : 'warning'
+                        }
+                        startDecorator={<AlertTriangleIcon size={18} />}
+                        sx={{ mt: 1 }}
+                      >
+                        <Stack spacing={1}>
+                          <Typography
+                            level="title-sm"
+                            color={
+                              resourceValidation.hasErrors
+                                ? 'danger'
+                                : 'warning'
+                            }
+                          >
+                            {resourceValidation.hasErrors
+                              ? 'Local provider cannot meet task requirements'
+                              : 'Local provider may not meet task requirements'}
+                          </Typography>
+                          <Stack spacing={0.5}>
+                            {resourceValidation.issues.map((issue, idx) => (
+                              <Stack
+                                key={idx}
+                                direction="row"
+                                spacing={1}
+                                alignItems="center"
+                              >
+                                <Chip
+                                  size="sm"
+                                  variant="solid"
+                                  color={
+                                    issue.type === 'error'
+                                      ? 'danger'
+                                      : 'warning'
+                                  }
+                                >
+                                  {issue.label}
+                                </Chip>
+                                <Typography level="body-xs">
+                                  Required: <strong>{issue.required}</strong> —
+                                  Available: <strong>{issue.available}</strong>
+                                </Typography>
+                              </Stack>
+                            ))}
+                          </Stack>
+                          {resourceValidation.hasErrors && (
+                            <Typography level="body-xs" color="danger">
+                              Consider selecting a different provider with the
+                              required resources.
+                            </Typography>
+                          )}
+                        </Stack>
+                      </Alert>
+                    )}
+
+                  {isLocalProvider &&
+                    resourceValidation?.isCompatible &&
+                    effectiveResources && (
+                      <Alert
+                        variant="soft"
+                        color="success"
+                        startDecorator={<CheckCircleIcon size={18} />}
+                        sx={{ mt: 1 }}
+                      >
+                        <Typography level="body-sm" color="success">
+                          Local provider meets the task resource requirements.
+                        </Typography>
+                      </Alert>
+                    )}
+                </Stack>
+              )}
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -1202,7 +1931,7 @@ export default function QueueTaskModal({
             color="success"
             onClick={handleSubmit}
             loading={isSubmitting}
-            disabled={!selectedProviderId}
+            disabled={!selectedProviderId || isSubmitting}
           >
             Submit
           </Button>

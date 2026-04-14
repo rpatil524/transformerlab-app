@@ -19,20 +19,20 @@ import {
   InfoIcon,
   MessageCircle,
   SearchIcon,
-  StoreIcon,
   Trash2Icon,
   ImageIcon,
   RotateCcwIcon,
 } from 'lucide-react';
 import { useState } from 'react';
 
-import { Link as ReactRouterLink, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import * as chatAPI from '../../lib/transformerlab-api-sdk';
 
 import { filterByFilters, licenseTypes, modelTypes } from '../../lib/utils';
 import TinyMLXLogo from '../Shared/TinyMLXLogo';
-import SelectButton from '../Experiment/SelectButton';
 import { fetchWithAuth } from 'renderer/lib/authContext';
+import VersionGroupChip from '../Shared/VersionGroupChip';
+import AssetVersionsDrawer from '../Shared/AssetVersionsDrawer';
 
 type Order = 'asc' | 'desc';
 
@@ -43,7 +43,6 @@ const LocalModelsTable = ({
   setFoundation,
   setAdaptor,
   setEmbedding,
-  pickAModelMode = false,
   showOnlyGeneratedModels = false,
   isEmbeddingMode = false,
   experimentInfo = null,
@@ -51,6 +50,10 @@ const LocalModelsTable = ({
   const [order, setOrder] = useState<Order>('desc');
   const [searchText, setSearchText] = useState('');
   const [filters, setFilters] = useState({});
+  const [versionDrawer, setVersionDrawer] = useState<{
+    open: boolean;
+    groupId: string;
+  }>({ open: false, groupId: '' });
 
   const navigate = useNavigate();
 
@@ -247,6 +250,7 @@ const LocalModelsTable = ({
               <th style={{ width: 60, padding: 12 }}>Params</th>
               {/* <th style={{ width: 220, padding: 12 }}>Type</th> */}
               <th style={{ width: 180, padding: 12 }}>Model ID</th>
+              <th style={{ width: 120, padding: 12 }}>Versions</th>
               <th style={{ width: 60, padding: 12 }}> </th>
             </tr>
           </thead>
@@ -343,127 +347,119 @@ const LocalModelsTable = ({
                       ></Box>
                     </td> */}
                       <td>{row.model_id}</td>
+                      <td>
+                        <VersionGroupChip
+                          versionGroups={row.version_groups || []}
+                          onClick={(groupId) =>
+                            setVersionDrawer({ open: true, groupId })
+                          }
+                        />
+                      </td>
                       <td style={{ textAlign: 'right' }}>
                         {/* <Link fontWeight="lg" component="button" color="neutral">
                           Archive
                         </Link> */}
-                        {pickAModelMode === true ? (
-                          <SelectButton
-                            setFoundation={setFoundation}
-                            setAdaptor={setAdaptor}
-                            setEmbedding={setEmbedding}
-                            model={row}
-                            experimentInfo={experimentInfo}
-                          />
-                        ) : (
-                          <>
-                            <InfoIcon
-                              onClick={() => {
-                                alert(JSON.stringify(row?.json_data));
-                              }}
-                            />
-                            &nbsp;
-                            <Trash2Icon
-                              color="var(--joy-palette-danger-600)"
-                              onClick={async () => {
+                        <InfoIcon
+                          onClick={() => {
+                            alert(JSON.stringify(row?.json_data));
+                          }}
+                        />
+                        &nbsp;
+                        <Trash2Icon
+                          color="var(--joy-palette-danger-600)"
+                          onClick={async () => {
+                            if (
+                              confirm(
+                                "Are you sure you want to delete model '" +
+                                  row.model_id +
+                                  "'?",
+                              )
+                            ) {
+                              try {
                                 if (
                                   confirm(
-                                    "Are you sure you want to delete model '" +
+                                    "Do you want to delete model '" +
                                       row.model_id +
-                                      "'?",
+                                      "' from your local Huggingface cache as well (if present) ?",
                                   )
                                 ) {
-                                  try {
-                                    if (
-                                      confirm(
-                                        "Do you want to delete model '" +
-                                          row.model_id +
-                                          "' from your local Huggingface cache as well (if present) ?",
-                                      )
-                                    ) {
-                                      await fetchWithAuth(
-                                        chatAPI.Endpoints.Models.Delete(
-                                          row.model_id,
-                                          true,
-                                        ),
-                                      );
-                                    } else {
-                                      await fetchWithAuth(
-                                        chatAPI.Endpoints.Models.Delete(
-                                          row.model_id,
-                                          false,
-                                        ),
-                                      );
-                                    }
-
-                                    await mutateModels();
-
-                                    try {
-                                      const currentFoundation =
-                                        experimentInfo?.config?.foundation ||
-                                        '';
-                                      const currentFilename =
-                                        experimentInfo?.config
-                                          ?.foundation_filename || '';
-                                      const foundationId = currentFoundation
-                                        ? String(currentFoundation)
-                                            .split('/')
-                                            .slice(-1)[0]
-                                        : '';
-
-                                      const deletedMatchesFoundation =
-                                        foundationId === row.model_id ||
-                                        currentFoundation === row.model_id ||
-                                        currentFilename === row.model_id ||
-                                        currentFilename === row.local_path ||
-                                        currentFoundation === row.local_path;
-
-                                      if (
-                                        deletedMatchesFoundation &&
-                                        experimentInfo?.id
-                                      ) {
-                                        // optimistic clear in UI
-                                        if (
-                                          typeof setFoundation === 'function'
-                                        ) {
-                                          setFoundation(null);
-                                        }
-
-                                        // batch-update backend to clear all foundation-related fields
-                                        await chatAPI.authenticatedFetch(
-                                          chatAPI.Endpoints.Experiment.UpdateConfigs(
-                                            experimentInfo.id,
-                                          ),
-                                          {
-                                            method: 'POST',
-                                            headers: {
-                                              'Content-Type':
-                                                'application/json',
-                                            },
-                                            body: JSON.stringify({
-                                              foundation: '',
-                                              foundation_filename: '',
-                                              foundation_model_architecture: '',
-                                              inferenceParams: '{}',
-                                            }),
-                                          },
-                                        );
-                                      }
-                                    } catch (err) {
-                                      console.error(
-                                        'Error clearing foundation after model deletion',
-                                        err,
-                                      );
-                                    }
-                                  } catch (e) {
-                                    console.error('Failed to delete model', e);
-                                    alert('Failed to delete model');
-                                  }
+                                  await fetchWithAuth(
+                                    chatAPI.Endpoints.Models.Delete(
+                                      row.model_id,
+                                      true,
+                                    ),
+                                  );
+                                } else {
+                                  await fetchWithAuth(
+                                    chatAPI.Endpoints.Models.Delete(
+                                      row.model_id,
+                                      false,
+                                    ),
+                                  );
                                 }
-                              }}
-                            />
-                          </>
-                        )}
+
+                                await mutateModels();
+
+                                try {
+                                  const currentFoundation =
+                                    experimentInfo?.config?.foundation || '';
+                                  const currentFilename =
+                                    experimentInfo?.config
+                                      ?.foundation_filename || '';
+                                  const foundationId = currentFoundation
+                                    ? String(currentFoundation)
+                                        .split('/')
+                                        .slice(-1)[0]
+                                    : '';
+
+                                  const deletedMatchesFoundation =
+                                    foundationId === row.model_id ||
+                                    currentFoundation === row.model_id ||
+                                    currentFilename === row.model_id ||
+                                    currentFilename === row.local_path ||
+                                    currentFoundation === row.local_path;
+
+                                  if (
+                                    deletedMatchesFoundation &&
+                                    experimentInfo?.id
+                                  ) {
+                                    // optimistic clear in UI
+                                    if (typeof setFoundation === 'function') {
+                                      setFoundation(null);
+                                    }
+
+                                    // batch-update backend to clear all foundation-related fields
+                                    await chatAPI.authenticatedFetch(
+                                      chatAPI.Endpoints.Experiment.UpdateConfigs(
+                                        experimentInfo.id,
+                                      ),
+                                      {
+                                        method: 'POST',
+                                        headers: {
+                                          'Content-Type': 'application/json',
+                                        },
+                                        body: JSON.stringify({
+                                          foundation: '',
+                                          foundation_filename: '',
+                                          foundation_model_architecture: '',
+                                          inferenceParams: '{}',
+                                        }),
+                                      },
+                                    );
+                                  }
+                                } catch (err) {
+                                  console.error(
+                                    'Error clearing foundation after model deletion',
+                                    err,
+                                  );
+                                }
+                              } catch (e) {
+                                console.error('Failed to delete model', e);
+                                alert('Failed to delete model');
+                              }
+                            }
+                          }}
+                        />
                       </td>
                     </tr>
                   );
@@ -476,19 +472,8 @@ const LocalModelsTable = ({
                     justifyContent="center"
                     margin={5}
                   >
-                    {window?.platform?.multiuser === true ? (
-                      'No models are currently available. Models saved from jobs in this experiment will be available here.'
-                    ) : (
-                      <>
-                        You do not have any models on your local machine. You
-                        can download a model by going to the{' '}
-                        <ReactRouterLink to="/zoo">
-                          <StoreIcon />
-                          Model Registry
-                        </ReactRouterLink>
-                        .
-                      </>
-                    )}
+                    No models are currently available. Models saved from jobs in
+                    this experiment will be available here.
                   </Typography>
                 </td>
               </tr>
@@ -496,12 +481,12 @@ const LocalModelsTable = ({
           </tbody>
         </Table>
       </Sheet>
-      {window?.platform?.multiuser !== true && (
-        <Typography mt={2} level="body-sm">
-          Looking for more models? Go to the{' '}
-          <ReactRouterLink to="/zoo">Model Registry</ReactRouterLink>
-        </Typography>
-      )}
+      <AssetVersionsDrawer
+        open={versionDrawer.open}
+        onClose={() => setVersionDrawer({ open: false, groupId: '' })}
+        assetType="model"
+        groupId={versionDrawer.groupId}
+      />
     </>
   );
 };

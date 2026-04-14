@@ -5,6 +5,7 @@ import subprocess
 import sys
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from transformerlab.db.constants import DATABASE_FILE_NAME, DATABASE_URL, DATABASE_TYPE
 from lab.dirs import get_workspace_dir
@@ -13,7 +14,22 @@ from lab.dirs import get_workspace_dir
 # --- SQLAlchemy Async Engine ---
 # This engine is the core entry point to the database.
 # It is created once and can be imported elsewhere.
-async_engine = create_async_engine(DATABASE_URL, echo=False)
+# Use NullPool for SQLite (pooling provides no benefit since SQLite serializes writes).
+# Use higher pool limits for Postgres to handle concurrent connections.
+_pg_pool_size = int(os.getenv("TFL_DB_POOL_SIZE", "20"))
+_pg_max_overflow = int(os.getenv("TFL_DB_MAX_OVERFLOW", "40"))
+_pg_pool_timeout = int(os.getenv("TFL_DB_POOL_TIMEOUT", "60"))
+
+if DATABASE_URL.startswith("sqlite"):
+    async_engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
+else:
+    async_engine = create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_size=_pg_pool_size,
+        max_overflow=_pg_max_overflow,
+        pool_timeout=_pg_pool_timeout,
+    )
 
 # --- SQLAlchemy Async Session Factory ---
 # This is a factory that creates new AsyncSession objects.
@@ -65,15 +81,19 @@ async def run_alembic_migrations():
 
 async def init():
     """
-    Create the database, tables, and workspace folder if they don't exist.
+    Initialize the process-local DB connection and apply runtime PRAGMAs.
     """
     global db
 
     if DATABASE_TYPE == "sqlite":
         # SQLite-specific initialization
-        # Migrate database from old location if necessary
-        old_db_base = os.path.join(await get_workspace_dir(), "llmlab.sqlite3")
-        if os.path.exists(old_db_base):
+        try:
+            # Migrate database from old location if necessary
+            old_db_base = os.path.join(await get_workspace_dir(), "llmlab.sqlite3")
+        except RuntimeError:
+            # Assume we are in one of the cloud modes and migration is not needed
+            old_db_base = None
+        if old_db_base and os.path.exists(old_db_base):
             if not os.path.exists(DATABASE_FILE_NAME):
                 for ext in ["", "-wal", "-shm"]:
                     old_path = old_db_base + ext
@@ -131,8 +151,6 @@ async def init():
                 await db.commit()
 
     print("✅ Database initialized")
-
-    # await init_sql_model()
 
     return
 

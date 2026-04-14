@@ -26,7 +26,6 @@ Endpoints.Tasks = {
   Queue: (id: string) => `${API_URL()}tasks/${id}/queue`,
   GetByID: (id: string) => `${API_URL()}tasks/${id}/get`,
   UpdateTask: (id: string) => `${API_URL()}tasks/${id}/update`,
-  NewTask: () => `${API_URL()}tasks/new_task`,
   DeleteTask: (id: string) => `${API_URL()}tasks/${id}/delete`,
   Gallery: () => `${API_URL()}tasks/gallery`,
   ImportFromGallery: (experimentId: string) =>
@@ -58,8 +57,8 @@ Endpoints.Task = {
     `${API_URL()}experiment/${experimentId}/task/${id}/get`,
   UpdateTemplate: (experimentId: string, id: string) =>
     `${API_URL()}experiment/${experimentId}/task/${id}/update`,
-  NewTemplate: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/task/new_task`,
+  CreateTemplate: (experimentId: string) =>
+    `${API_URL()}experiment/${experimentId}/task/create`,
   DeleteTemplate: (experimentId: string, id: string) =>
     `${API_URL()}experiment/${experimentId}/task/${id}/delete`,
   Gallery: (experimentId: string) =>
@@ -78,45 +77,87 @@ Endpoints.Task = {
     `${API_URL()}experiment/${experimentId}/task/gallery/team/add`,
   DeleteFromTeamGallery: (experimentId: string) =>
     `${API_URL()}experiment/${experimentId}/task/gallery/team/delete`,
+  TeamGalleryListFiles: (experimentId: string, galleryId: string) =>
+    `${API_URL()}experiment/${experimentId}/task/gallery/team/${encodeURIComponent(
+      galleryId,
+    )}/files`,
+  TeamGalleryGetFile: (
+    experimentId: string,
+    galleryId: string,
+    filePath: string,
+  ) =>
+    `${API_URL()}experiment/${experimentId}/task/gallery/team/${encodeURIComponent(
+      galleryId,
+    )}/file/${encodeURIComponent(filePath)}`,
   FetchTaskJson: (experimentId: string, url: string) =>
     `${API_URL()}experiment/${experimentId}/task/fetch_task_json?url=${encodeURIComponent(url)}`,
   FromDirectory: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/task2/from_directory`,
+    `${API_URL()}experiment/${experimentId}/task/create`,
   BlankFromYaml: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/task2/blank`,
+    `${API_URL()}experiment/${experimentId}/task/create`,
   GetYaml: (experimentId: string, taskId: string) =>
-    `${API_URL()}experiment/${experimentId}/task2/${taskId}/yaml`,
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/yaml`,
   UpdateYaml: (experimentId: string, taskId: string) =>
-    `${API_URL()}experiment/${experimentId}/task2/${taskId}/yaml`,
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/yaml`,
+  ValidateYaml: (experimentId: string) =>
+    `${API_URL()}experiment/${experimentId}/task/validate`,
+  ListFiles: (experimentId: string, taskId: string) =>
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/files`,
+  GetFile: (experimentId: string, taskId: string, filePath: string) =>
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/file/${encodeURIComponent(
+      filePath,
+    )}`,
+  UpdateFile: (experimentId: string, taskId: string, filePath: string) =>
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/file/${encodeURIComponent(
+      filePath,
+    )}`,
+  DeleteFile: (experimentId: string, taskId: string, filePath: string) =>
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/file/${encodeURIComponent(
+      filePath,
+    )}`,
+  UploadFile: (experimentId: string, taskId: string) =>
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/file-upload`,
+  GetGithubFile: (experimentId: string, taskId: string, filePath: string) =>
+    `${API_URL()}experiment/${experimentId}/task/${taskId}/github_file/${encodeURIComponent(
+      filePath,
+    )}`,
 };
 
 Endpoints.ComputeProvider = {
-  List: () => `${API_URL()}compute_provider/`,
+  List: () => `${API_URL()}compute_provider/providers/`,
   LaunchTemplate: (providerId: string) =>
-    `${API_URL()}compute_provider/${providerId}/task/launch`,
+    `${API_URL()}compute_provider/providers/${providerId}/launch/`,
   LaunchTask: (providerId: string) =>
-    `${API_URL()}compute_provider/${providerId}/task/launch`, // Deprecated: use LaunchTemplate
-  CheckJobStatus: (jobId: string) =>
-    `${API_URL()}compute_provider/jobs/${jobId}/check-status`,
+    `${API_URL()}compute_provider/providers/${providerId}/launch/`, // Deprecated: use LaunchTemplate
+  CheckJobStatus: (jobId: string, experimentId: string) => {
+    const baseUrl = `${API_URL()}compute_provider/jobs/${jobId}/check-status`;
+    return `${baseUrl}?experiment_id=${encodeURIComponent(String(experimentId))}`;
+  },
   CheckSweepStatus: (experimentId?: string, jobId?: string) => {
     if (experimentId) {
-      return `${API_URL()}compute_provider/jobs/sweep-status?experiment_id=${experimentId}`;
+      return `${API_URL()}compute_provider/sweep/?experiment_id=${experimentId}`;
     }
     if (jobId) {
-      return `${API_URL()}compute_provider/jobs/${jobId}/sweep-status`;
+      return `${API_URL()}compute_provider/sweep/${jobId}/status`;
     }
     throw new Error('Either experimentId or jobId must be provided');
   },
   GetSweepResults: (jobId: string) =>
-    `${API_URL()}compute_provider/jobs/${jobId}/sweep-results`,
+    `${API_URL()}compute_provider/sweep/${jobId}/results`,
   StopCluster: (providerId: string, clusterName: string) =>
-    `${API_URL()}compute_provider/${providerId}/clusters/${clusterName}/stop`,
+    `${API_URL()}compute_provider/providers/${providerId}/clusters/${clusterName}/stop`,
   UploadTemplateFile: (providerId: string, taskId: string | number) =>
-    `${API_URL()}compute_provider/${providerId}/task/${taskId}/file-upload`,
+    `${API_URL()}compute_provider/providers/${providerId}/launch/${taskId}/file-upload`,
   UploadTaskFile: (providerId: string, taskId: string | number) =>
-    `${API_URL()}compute_provider/${providerId}/task/${taskId}/file-upload`, // Deprecated: use UploadTemplateFile
+    `${API_URL()}compute_provider/providers/${providerId}/launch/${taskId}/file-upload`, // Deprecated: use UploadTemplateFile
   Check: (providerId: string) =>
-    `${API_URL()}compute_provider/${providerId}/check`,
+    `${API_URL()}compute_provider/providers/${providerId}/check`,
+  Setup: (providerId: string) =>
+    `${API_URL()}compute_provider/providers/${providerId}/setup/`,
+  SetupStatus: (providerId: string) =>
+    `${API_URL()}compute_provider/providers/${providerId}/setup/status`,
+  DetectLocalAccelerators: () =>
+    `${API_URL()}compute_provider/providers/detect-accelerators`,
   EnsureQuotaRecorded: (experimentId?: string, jobId?: string) => {
     if (jobId) {
       return `${API_URL()}compute_provider/jobs/ensure-quota-recorded?job_id=${jobId}`;
@@ -134,70 +175,6 @@ Endpoints.SshKeys = {
   Update: () => `${API_URL()}ssh-key/`,
   Delete: () => `${API_URL()}ssh-key/`,
   Download: () => `${API_URL()}ssh-key/download`,
-};
-
-Endpoints.Workflows = {
-  ListInExperiment: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/list`,
-  CreateEmpty: (name: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/create_empty` +
-    `?name=${name}`,
-  UpdateName: (workflowId: string, new_name: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/update_name?new_name=${new_name}`,
-  UpdateConfig: (workflowId: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/config`,
-  DeleteWorkflow: (workflowId: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/delete/${workflowId}`,
-  AddNode: (workflowId: string, node: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/add_node?node=${node}`,
-  DeleteNode: (workflowId: string, nodeId: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/${nodeId}/delete_node`,
-  UpdateNode: (
-    workflowId: string,
-    nodeId: string,
-    node: string,
-    experimentId: string,
-  ) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/${nodeId}/update_node` +
-    `?node=${node}`,
-  EditNodeMetadata: (
-    workflowId: string,
-    nodeId: string,
-    metadata: string,
-    experimentId: string,
-  ) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/${nodeId}/edit_node_metadata` +
-    `?metadata=${metadata}`,
-  AddEdge: (
-    workflowId: string,
-    from: string,
-    to: string,
-    experimentId: string,
-  ) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/${from}/add_edge` +
-    `?end_node_id=${to}`,
-  RemoveEdge: (
-    workflowId: string,
-    start_node_id: string,
-    to: string,
-    experimentId: string,
-  ) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/${start_node_id}/remove_edge` +
-    `?end_node_id=${to}`,
-  RunWorkflow: (workflowId: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/start`,
-  ListRunsInExperiment: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/runs`,
-  GetRun: (workflowRunID: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/runs/${workflowRunID}`,
-  CancelRun: (workflowRunID: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowRunID}/cancel`,
-  ExportToYAML: (workflowId: string, experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/${workflowId}/export_to_yaml`,
-  ImportFromYAML: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/import_from_yaml`,
-  StartNextStep: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/workflows/start_next_step`,
 };
 
 Endpoints.Dataset = {
@@ -237,70 +214,19 @@ Endpoints.Dataset = {
 
 Endpoints.Models = {
   LocalList: () => `${API_URL()}model/list`,
-  CountDownloaded: () => `${API_URL()}model/count_downloaded`,
-  Gallery: () => `${API_URL()}model/gallery`,
   ModelGroups: () => `${API_URL()}model/model_groups_list`,
   GetPeftsForModel: () => `${API_URL()}model/pefts`,
-  UploadModelToHuggingFace: (
-    modelId: string,
-    modelName: string,
-    organizationName?: string,
-    model_card_data?: object,
-  ) =>
-    `${API_URL()}model/upload_to_huggingface?model_id=${modelId}&model_name=${
-      modelName
-    }&organization_name=${organizationName}&model_card_data=${JSON.stringify(
-      model_card_data,
-    )}`,
   DeletePeft: (modelId: string, peft: string) =>
     `${API_URL()}model/delete_peft?model_id=${modelId}&peft=${peft}`,
   InstallPeft: (modelId: string, peft: string) =>
     `${API_URL()}model/install_peft?model_id=${modelId}&peft=${peft}`,
   ModelDetailsFromGallery: (modelId: string) =>
     `${API_URL()}model/gallery/${convertSlashInUrl(modelId)}`,
-  ModelDetailsFromFilesystem: (modelId: string) =>
-    `${API_URL()}model/details/${convertSlashInUrl(modelId)}`,
-  ModelProvenance: (modelId: string) =>
-    `${API_URL()}model/provenance/${convertSlashInUrl(modelId)}`,
-  GetLocalHFConfig: (modelId: string) =>
-    `${API_URL()}model/get_local_hfconfig?model_id=${modelId}`,
-  SearchForLocalUninstalledModels: (path: string) =>
-    `${API_URL()}model/list_local_uninstalled?path=${path}`,
-  ImportFromSource: (modelSource: string, modelId: string) =>
-    `${API_URL()}model/import_from_source?model_source=${
-      modelSource
-    }&model_id=${modelId}`,
-
-  ImportFromLocalPath: (modelPath: string) =>
-    `${API_URL()}model/import_from_local_path?model_path=${modelPath}`,
-  HuggingFaceLogin: () => `${API_URL()}model/login_to_huggingface`,
-  HuggingFaceLogout: () => `${API_URL()}model/logout_from_huggingface`,
   Delete: (modelId: string, deleteCache: boolean = false) =>
     `${API_URL()}model/delete?model_id=${modelId}&delete_from_cache=${
       deleteCache
     }`,
-  wandbLogin: () => `${API_URL()}model/login_to_wandb`,
-  testWandbLogin: () => `${API_URL()}model/test_wandb_login`,
 };
-
-Endpoints.Plugins = {
-  Gallery: () => `${API_URL()}plugins/gallery`,
-  Info: (pluginId: string) => `${API_URL()}plugins/info?plugin_id=${pluginId}`,
-  Preview: (pluginId: string) =>
-    `${API_URL()}plugins/preview?pluginId=${pluginId}`,
-  List: () => `${API_URL()}plugins/list`,
-  RunPluginInstallScript: (pluginId: string) =>
-    `${API_URL()}plugins/${pluginId}/run_installer_script`,
-  SuggestLoader: (modelArchitecture: string) =>
-    `${API_URL()}plugins/suggest_loader?model_architecture=${encodeURIComponent(modelArchitecture)}`,
-};
-
-// Following is no longer needed as it is replaced with useAPI
-// Endpoints.Config = {
-//   Get: (key: string) => `${API_URL()}config/get/${key}`,
-//   Set: (key: string, value: string) =>
-//     `${API_URL()}config/set?k=${key}&v=${value}`,
-// };
 
 Endpoints.Documents = {
   List: (experimentId: string, currentFolder: string = '') =>
@@ -323,73 +249,17 @@ Endpoints.Documents = {
     `${API_URL()}experiment/${experimentId}/documents/create_folder?name=${
       folderName
     }`,
-  UploadLinks: (experimentId: string, folderName: string) =>
-    `${API_URL()}experiment/${experimentId}/documents/upload_links?folder=${
-      folderName
-    }`,
-};
-
-Endpoints.Rag = {
-  Query: (
-    experimentId: string,
-    model_name: string,
-    query: string,
-    settings: string,
-    ragFolder: string = 'rag',
-  ) =>
-    `${API_URL()}experiment/${experimentId}/rag/query?model=${model_name}&query=${query}&settings=${settings}&rag_folder=${ragFolder}`,
-  ReIndex: (experimentId: string, folderName: string = 'rag') =>
-    `${API_URL()}experiment/${experimentId}/rag/reindex?rag_folder=${folderName}`,
-  Embeddings: (experimentId: string) =>
-    `${API_URL()}experiment/${experimentId}/rag/embed`,
-};
-
-Endpoints.Prompts = {
-  List: () => `${API_URL()}prompts/list`,
-  New: () => `${API_URL()}prompts/new`,
-  Delete: (promptId: string) => `${API_URL()}prompts/delete/${promptId}`,
-};
-
-Endpoints.BatchedPrompts = {
-  List: () => `${API_URL()}batch/list`,
-  New: () => `${API_URL()}batch/new`,
-  Delete: (promptId: string) => `${API_URL()}batch/delete/${promptId}`,
-  InstallMcpPlugin: (serverName: string) =>
-    `${API_URL()}tools/install_mcp_server?server_name=${encodeURIComponent(serverName)}`,
-};
-
-Endpoints.Tools = {
-  Call: (function_name: string, function_arguments: string) =>
-    `${API_URL()}tools/call/${function_name}?params=${function_arguments}`,
-  List: () => `${API_URL()}tools/list`,
-  All: () => `${API_URL()}tools/all`,
-  InstallMcpPlugin: (serverName: string) =>
-    `${API_URL()}tools/install_mcp_server?server_name=${encodeURIComponent(serverName)}`,
 };
 
 Endpoints.ServerInfo = {
-  Get: () => `${API_URL()}server/info`,
-  PythonLibraries: () => `${API_URL()}server/python_libraries`,
   StreamLog: () => `${API_URL()}server/stream_log`,
+  Version: () => `${API_URL()}server/version`,
 };
 
 Endpoints.Charts = {
   CompareEvals: (jobIds: string) =>
     `${API_URL()}evals/compare_evals?job_list=${jobIds}`,
 };
-
-export function GET_TRAINING_TEMPLATE_URL() {
-  return `${API_URL()}train/templates`;
-}
-
-export function CREATE_TRAINING_JOB_URL(
-  template_id: string,
-  experiment_id: string,
-) {
-  return `${API_URL()}train/job/create?template_id=${
-    template_id
-  }&description=description&experiment_id=${experiment_id}`;
-}
 
 Endpoints.Experiment = {
   GetAll: () => `${API_URL()}experiment/`,
@@ -405,32 +275,6 @@ Endpoints.Experiment = {
     `${API_URL()}experiment/${id}/file_contents?filename=${filename}`,
   SaveFile: (id: string, filename: string) =>
     `${API_URL()}experiment/${id}/save_file_contents?filename=${filename}`,
-  GetPlugin: (id: string, plugin_name: string) => {
-    return `${API_URL()}experiment/${
-      id
-    }/evals/get_evaluation_plugin_file_contents?plugin_name=${plugin_name}`;
-  },
-  GetGenerationPlugin: (id: string, plugin_name: string) => {
-    return `${API_URL()}experiment/${
-      id
-    }/generations/get_evaluation_plugin_file_contents?plugin_name=${
-      plugin_name
-    }`;
-  },
-  RunEvaluation: (id: string, pluginName: string, evalName: string) => {
-    return `${API_URL()}experiment/${
-      id
-    }/evals/run_evaluation_script?eval_name=${evalName}&plugin_name=${
-      pluginName
-    }`;
-  },
-  RunGeneration: (id: string, pluginName: string, evalName: string) => {
-    return `${API_URL()}experiment/${
-      id
-    }/generations/run_generation_script?generation_name=${
-      evalName
-    }&plugin_name=${pluginName}`;
-  },
   DeleteEval: (experimentId: string, evalName: string) =>
     `${API_URL()}experiment/${experimentId}/evals/delete` +
     `?eval_name=${evalName}`,
@@ -443,18 +287,6 @@ Endpoints.Experiment = {
   GetGenerationOutput: (experimentId: string, eval_name: string) =>
     `${API_URL()}experiment/${experimentId}/generations/get_output` +
     `?eval_name=${eval_name}`,
-  RunExport: (
-    id: string,
-    pluginName: string,
-    pluginArchitecture: string,
-    pluginParams: string,
-  ) => {
-    return `${API_URL()}experiment/${
-      id
-    }/export/run_exporter_script?plugin_name=${
-      pluginName
-    }&plugin_architecture=${pluginArchitecture}&plugin_params=${pluginParams}`;
-  },
   SaveConversation: (experimentId: String) =>
     `${API_URL()}experiment/${experimentId}/conversations/save`,
   GetConversations: (experimentId: string) =>
@@ -465,48 +297,6 @@ Endpoints.Experiment = {
         conversationId
       }`,
     ),
-  InstallPlugin: (pluginId: string) =>
-    `${API_URL()}plugins/gallery/${pluginId}/install`,
-  DeletePlugin: (pluginId: string) =>
-    `${API_URL()}plugins/delete_plugin?plugin_name=${pluginId}`,
-  ListScripts: (experimentId: string) =>
-    FULL_PATH(`experiment/${experimentId}/plugins/list`),
-  ListScriptsOfType: (
-    experimentId: string,
-    type: string,
-    filter: string | null = null,
-  ) =>
-    FULL_PATH(
-      `experiment/${experimentId}/plugins/list?type=${
-        type
-      }${filter ? `&filter=${filter}` : ''}`,
-    ),
-  ScriptListFiles: (experimentId: string, id: string) =>
-    `${API_URL()}experiment/${experimentId}/plugins/${id}/list_files`,
-  ScriptGetFile: (experimentId: string, pluginId: string, filename: string) =>
-    `${API_URL()}experiment/${experimentId}/plugins/${
-      pluginId
-    }/file_contents?filename=${filename}`,
-  ScriptNewFile: (experimentId: string, pluginId: string, filename: string) =>
-    `${API_URL()}experiment/${experimentId}/plugins/${
-      pluginId
-    }/create_new_file?filename=${filename}`,
-  ScriptDeleteFile: (
-    experimentId: string,
-    pluginId: string,
-    filename: string,
-  ) =>
-    `${API_URL()}experiment/${experimentId}/plugins/${
-      pluginId
-    }/delete_file?filename=${filename}`,
-  ScriptSaveFile: (experimentId: string, pluginId: string, filename: string) =>
-    `${API_URL()}experiment/${experimentId}/plugins/${
-      pluginId
-    }/save_file_contents?filename=${filename}`,
-  ScriptCreateNew: (experimentId: string, pluginId: string) =>
-    `${API_URL()}experiment/${experimentId}/plugins/new_plugin?pluginId=${
-      pluginId
-    }`,
   GetOutputFromJob: (experimentId: string, jobId: string) =>
     `${API_URL()}experiment/${experimentId}/jobs/${jobId}/output`,
   GetTasksOutputFromJob: (experimentId: string, jobId: string) =>
@@ -530,12 +320,20 @@ Endpoints.Experiment = {
     live: boolean = false,
   ) =>
     `${API_URL()}experiment/${experimentId}/jobs/${jobId}/provider_logs?tail_lines=${tailLines}&live=${live}`,
+  GetRequestLogs: (
+    experimentId: string,
+    jobId: string,
+    tailLines: number = 400,
+  ) =>
+    `${API_URL()}experiment/${experimentId}/jobs/${jobId}/request_logs?tail_lines=${tailLines}`,
   GetTunnelInfo: (
     experimentId: string,
     jobId: string,
     tailLines: number = 1000,
   ) =>
     `${API_URL()}experiment/${experimentId}/jobs/${jobId}/tunnel_info?tail_lines=${tailLines}`,
+  GetProfilingReport: (experimentId: string, jobId: string) =>
+    `${API_URL()}experiment/${experimentId}/jobs/${jobId}/profiling_report`,
   GetAdditionalDetails: (
     experimentId: string,
     jobId: string,
@@ -593,10 +391,8 @@ Endpoints.Jobs = {
     `${API_URL()}experiment/${experimentId}/jobs/update/${jobId}?status=${status}`,
   GetEvalImages: (experimentId: string, jobId: string) =>
     `${API_URL()}experiment/${experimentId}/jobs/${jobId}/get_eval_images`,
-};
-
-Endpoints.Global = {
-  PromptLog: () => `${API_URL()}prompt_log`,
+  UpdateJobData: (experimentId: string, jobId: string) =>
+    `${API_URL()}experiment/${experimentId}/jobs/${jobId}/job_data`,
 };
 
 Endpoints.Quota = {
@@ -617,4 +413,42 @@ Endpoints.Teams = {
 Endpoints.Users = {
   GetSecrets: () => `${API_URL()}users/me/secrets`,
   SetSecrets: () => `${API_URL()}users/me/secrets`,
+};
+
+Endpoints.AssetVersions = {
+  ListGroups: (assetType: string) =>
+    `${API_URL()}asset_versions/groups?asset_type=${assetType}`,
+  DeleteGroup: (assetType: string, groupId: string) =>
+    `${API_URL()}asset_versions/groups/${assetType}/${groupId}`,
+  UpdateGroup: (assetType: string, groupId: string) =>
+    `${API_URL()}asset_versions/groups/${assetType}/${groupId}`,
+  CreateVersion: () => `${API_URL()}asset_versions/versions`,
+  ListVersions: (assetType: string, groupId: string) =>
+    `${API_URL()}asset_versions/versions/${assetType}/${groupId}`,
+  GetVersion: (assetType: string, groupId: string, versionLabel: string) =>
+    `${API_URL()}asset_versions/versions/${assetType}/${groupId}/${versionLabel}`,
+  DeleteVersion: (assetType: string, groupId: string, versionLabel: string) =>
+    `${API_URL()}asset_versions/versions/${assetType}/${groupId}/${versionLabel}`,
+  UpdateVersion: (assetType: string, groupId: string, versionLabel: string) =>
+    `${API_URL()}asset_versions/versions/${assetType}/${groupId}/${versionLabel}`,
+  SetTag: (assetType: string, groupId: string, versionLabel: string) =>
+    `${API_URL()}asset_versions/versions/${assetType}/${groupId}/${versionLabel}/tag`,
+  ClearTag: (assetType: string, groupId: string, versionLabel: string) =>
+    `${API_URL()}asset_versions/versions/${assetType}/${groupId}/${versionLabel}/tag`,
+  Resolve: (
+    assetType: string,
+    groupId: string,
+    tag?: string,
+    versionLabel?: string,
+  ) => {
+    let url = `${API_URL()}asset_versions/resolve/${assetType}/${groupId}`;
+    const params: string[] = [];
+    if (tag) params.push(`tag=${tag}`);
+    if (versionLabel !== undefined)
+      params.push(`version_label=${versionLabel}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    return url;
+  },
+  GetAssetGroupMap: (assetType: string) =>
+    `${API_URL()}asset_versions/map/${assetType}`,
 };

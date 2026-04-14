@@ -10,7 +10,7 @@ import { useEffect, useRef } from 'react';
  */
 export function formatBytes(bytes: number, decimals = 2): string {
   // Handle invalid inputs (NaN, undefined, null, negative values)
-  if (!Number.isFinite(bytes) || bytes < 0) return '0 Bytes';
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 Bytes';
 
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
@@ -207,10 +207,40 @@ export function jobChipColor(status: string): string {
   if (status === 'QUEUED') return 'var(--joy-palette-warning-200)';
   if (status === 'LAUNCHING') return 'var(--joy-palette-primary-200)';
   if (status === 'FAILED') return 'var(--joy-palette-danger-200)';
+  if (status === 'STOPPING') return 'var(--joy-palette-warning-200)';
   if (status == 'STOPPED') return 'var(--joy-palette-warning-200)';
   if (status == 'RUNNING') return 'rgb(225,237,233)';
 
   return 'var(--joy-palette-neutral-200)';
+}
+
+/** Matches `lab.job_status.TERMINAL_STATUSES` — safe to remove a job record from the UI. */
+const TERMINAL_JOB_STATUSES = new Set([
+  'COMPLETE',
+  'STOPPED',
+  'FAILED',
+  'CANCELLED',
+  'DELETED',
+  'UNAUTHORIZED',
+]);
+
+export function isTerminalJobStatus(
+  status: string | undefined | null,
+): boolean {
+  if (status == null || status === '') {
+    return false;
+  }
+  return TERMINAL_JOB_STATUSES.has(status);
+}
+
+/** Jobs the user may remove from the experiment list: terminal, or queued but never dispatched. */
+export function isDeletableJobRecordStatus(
+  status: string | undefined | null,
+): boolean {
+  if (status == null || status === '') {
+    return false;
+  }
+  return isTerminalJobStatus(status) || status === 'NOT_STARTED';
 }
 
 export const colorArray = [
@@ -225,4 +255,69 @@ export const colorArray = [
 
 export function mixColorWithBackground(color: string, percent = '50'): string {
   return `color-mix(in srgb, ${color}, var(--joy-palette-background-surface) ${percent}%)`;
+}
+
+export const TEXT_FILE_EXTENSIONS = new Set([
+  'txt',
+  'log',
+  'csv',
+  'py',
+  'yaml',
+  'yml',
+  'md',
+  'sh',
+  'cfg',
+  'ini',
+  'toml',
+  'json',
+  'xml',
+  'html',
+  'css',
+  'js',
+  'ts',
+  'tsx',
+  'jsx',
+  'sql',
+  'r',
+  'ipynb',
+]);
+
+export const IMAGE_FILE_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'bmp',
+  'webp',
+  'svg',
+]);
+
+export function getFileExtension(fileName: string): string {
+  return fileName.split('.').pop()?.toLowerCase() || '';
+}
+
+const EXTENSION_TO_MONACO_LANGUAGE: Record<string, string> = {
+  py: 'python',
+  yaml: 'yaml',
+  yml: 'yaml',
+  json: 'json',
+  js: 'javascript',
+  ts: 'typescript',
+  tsx: 'typescript',
+  jsx: 'javascript',
+  sh: 'shell',
+  md: 'markdown',
+  html: 'html',
+  css: 'css',
+  xml: 'xml',
+  sql: 'sql',
+  toml: 'ini',
+  ini: 'ini',
+  cfg: 'ini',
+  r: 'r',
+};
+
+export function getMonacoLanguage(fileName: string): string {
+  const ext = getFileExtension(fileName);
+  return EXTENSION_TO_MONACO_LANGUAGE[ext] || 'plaintext';
 }

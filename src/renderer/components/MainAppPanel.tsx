@@ -6,24 +6,23 @@ import {
   useNavigate,
   redirect,
   useLocation,
+  useParams,
+  Outlet,
 } from 'react-router-dom';
 
 import * as chatAPI from 'renderer/lib/transformerlab-api-sdk';
 import { fetcher } from 'renderer/lib/transformerlab-api-sdk';
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSWRWithAuth as useSWR } from 'renderer/lib/authContext';
 
 import { useExperimentInfo } from 'renderer/lib/ExperimentInfoContext';
 import { useAnalytics } from './Shared/analytics/AnalyticsContext';
-import SafeJSONParse from './Shared/SafeJSONParse';
 import Data from './Data/Data';
-import Interact from './Experiment/Interact/Interact';
 import Welcome from './Welcome/Welcome';
 import ModelZoo from './ModelZoo/ModelZoo';
 import Compute from './Compute/Compute';
 import Api from './Experiment/Api';
 import Settings from './Experiment/Settings';
-import TrainLoRA from './Experiment/Train/TrainLoRA';
 import Documents from './Experiment/Documents';
 import ExperimentNotes from './Experiment/ExperimentNotes';
 import UserSettings from './User/UserSettings';
@@ -45,8 +44,13 @@ export const PageTracker = () => {
   useEffect(() => {
     const trackPageView = async () => {
       // Track page view when location changes
+      // But hide the specific experiment name in the URL
+      const normalizedPath = location.pathname.replace(
+        /^\/experiment\/[^/]+/,
+        '/experiment/:experimentName',
+      );
       analytics.page({
-        path: location.pathname,
+        path: normalizedPath,
         url: window.location.href,
         search: location.search,
         title: document.title,
@@ -65,6 +69,20 @@ export const PageTracker = () => {
   return null; // This component doesn't render anything
 };
 
+// Syncs the :experimentName URL param to the experiment context
+function ExperimentLayout() {
+  const { experimentName } = useParams();
+  const { setExperimentId } = useExperimentInfo();
+
+  useEffect(() => {
+    if (experimentName) {
+      setExperimentId(experimentName);
+    }
+  }, [experimentName, setExperimentId]);
+
+  return <Outlet />;
+}
+
 // This component renders the main content of the app that is shown
 // On the rightmost side, regardless of what menu items are selected
 // On the leftmost panel.
@@ -72,71 +90,7 @@ export default function MainAppPanel({ setLogsDrawerOpen = null }) {
   const { experimentInfo, experimentInfoMutate, setExperimentId } =
     useExperimentInfo();
   const location = useLocation();
-  const [selectedInteractSubpage, setSelectedInteractSubpage] =
-    useState('chat');
-
   // Use authenticated fetcher from SDK
-
-  // Extract pluginId at the top level
-  const inferenceParams = experimentInfo?.config?.inferenceParams;
-  const pluginId = inferenceParams
-    ? SafeJSONParse(inferenceParams)?.inferenceEngine
-    : null;
-
-  // Use SWR at the top level, not inside useEffect
-  const { data: modelData } = useSWR(
-    experimentInfo?.id && pluginId
-      ? chatAPI.Endpoints.Experiment.ScriptGetFile(
-          experimentInfo.id,
-          pluginId,
-          'index.json',
-        )
-      : null,
-    fetcher,
-  );
-  const [chatHistory, setChatHistory] = useState([]);
-  useEffect(() => {
-    // Clear chat history whenever the model/pluginId changes
-    setChatHistory([]);
-  }, [pluginId]);
-
-  const modelSupports = useMemo(() => {
-    const defaultSupports = [
-      'chat',
-      'completion',
-      'rag',
-      'tools',
-      'template',
-      'embeddings',
-      'tokenize',
-      'batched',
-    ];
-
-    if (
-      modelData &&
-      modelData !== 'null' &&
-      modelData !== 'undefined' &&
-      modelData !== 'FILE NOT FOUND'
-    ) {
-      return SafeJSONParse(modelData)?.supports || defaultSupports;
-    }
-
-    return defaultSupports;
-  }, [modelData]);
-
-  // When navigating to /experiment/chat, set the mode to the first supported mode
-  // If there's no supports array or it's empty, default to 'chat'
-  useEffect(() => {
-    if (location.pathname === '/experiment/chat') {
-      if (Array.isArray(modelSupports) && modelSupports.length > 0) {
-        // Always set mode to the first supported mode when navigating to the route
-        setSelectedInteractSubpage(modelSupports[0]);
-      } else {
-        // Fallback to 'chat' if no supports array
-        setSelectedInteractSubpage('chat');
-      }
-    }
-  }, [location.pathname, modelSupports]);
   const setFoundation = useCallback(
     (model, additionalConfigs = {}) => {
       let model_name = '';
@@ -261,26 +215,6 @@ export default function MainAppPanel({ setLogsDrawerOpen = null }) {
     [experimentInfo, experimentInfoMutate],
   );
 
-  const setRagEngine = useCallback(
-    async (name: string, rag_settings: any = {}) => {
-      await chatAPI.authenticatedFetch(
-        chatAPI.Endpoints.Experiment.UpdateConfigs(experimentInfo?.id),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            rag_engine: name,
-            rag_engine_settings: JSON.stringify(rag_settings),
-          }),
-        },
-      );
-      experimentInfoMutate();
-    },
-    [experimentInfo, experimentInfoMutate],
-  );
-
   if (!experimentInfo) {
     redirect('/');
   }
@@ -291,49 +225,50 @@ export default function MainAppPanel({ setLogsDrawerOpen = null }) {
       <PageTracker />
       <Routes>
         <Route path="/" element={<Welcome />} />
-        <Route path="/experiment/notes" element={<ExperimentNotes />} />
         <Route
-          path="/experiment/chat"
-          element={
-            <Interact
-              setRagEngine={setRagEngine}
-              mode={selectedInteractSubpage}
-              setMode={setSelectedInteractSubpage}
-              supports={modelSupports}
-              chatHistory={chatHistory}
-              setChatHistory={setChatHistory}
-            />
-          }
-        />
-        <Route
-          path="/experiment/model_architecture_visualization"
-          element={
-            <Interact
-              setRagEngine={setRagEngine}
-              mode="model_layers"
-              setMode={setSelectedInteractSubpage}
-              supports={modelSupports}
-              chatHistory={chatHistory}
-              setChatHistory={setChatHistory}
-            />
-          }
-        />
-        <Route path="/experiment/training" element={<TrainLoRA />} />
-        <Route path="/experiment/tasks" element={<Tasks />} />
-        <Route path="/experiment/interactive" element={<Interactive />} />
-        <Route path="/experiment/documents" element={<Documents />} />
+          path="/experiment/:experimentName"
+          element={<ExperimentLayout />}
+        >
+          <Route path="notes" element={<ExperimentNotes />} />
+          <Route path="tasks" element={<Tasks />} />
+          <Route path="interactive" element={<Interactive />} />
+          <Route path="documents" element={<Documents />} />
+          <Route path="settings" element={<Settings />} />
+        </Route>
         <Route path="/api" element={<Api />} />
-        <Route path="/experiment/settings" element={<Settings />} />
         <Route path="/zoo" element={<ModelZoo tab="groups" />} />
         <Route path="/zoo/local" element={<ModelZoo tab="local" />} />
         <Route path="/zoo/generated" element={<ModelZoo tab="generated" />} />
         <Route path="/zoo/store" element={<ModelZoo tab="store" />} />
         <Route path="/zoo/groups" element={<ModelZoo tab="groups" />} />
+        <Route path="/zoo/registry" element={<ModelZoo tab="registry" />} />
         <Route path="/data" element={<Data />} />
+        <Route path="/data/generated" element={<Data tab="generated" />} />
+        <Route path="/data/store" element={<Data tab="store" />} />
+        <Route path="/data/registry" element={<Data tab="registry" />} />
         <Route path="/tasks-gallery" element={<TasksGallery />} />
         <Route path="/compute" element={<Compute />} />
         <Route path="/settings" element={<TransformerLabSettings />} />
-        <Route path="/user" element={<UserSettings />} />
+        <Route path="/user" element={<UserSettings tab="profile" />} />
+        <Route path="/user/profile" element={<UserSettings tab="profile" />} />
+        <Route path="/user/secrets" element={<UserSettings tab="secrets" />} />
+        <Route
+          path="/user/api-keys"
+          element={<UserSettings tab="api-keys" />}
+        />
+        <Route
+          path="/user/invitations"
+          element={<UserSettings tab="invitations" />}
+        />
+        <Route
+          path="/user/compute-providers"
+          element={<UserSettings tab="compute-providers" />}
+        />
+        <Route path="/user/quota" element={<UserSettings tab="quota" />} />
+        <Route
+          path="/user/notifications"
+          element={<UserSettings tab="notifications" />}
+        />
         <Route path="/team" element={<Team />} />
         <Route path="/team/usage-report" element={<UsageReport />} />
       </Routes>

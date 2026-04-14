@@ -1,23 +1,32 @@
 """Service layer for bridging database provider records to ProviderConfig."""
 
-from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from fastapi import HTTPException
-from transformerlab.shared.models.models import (
-    TeamComputeProvider,
-    Team,
-    UserTeam,
-    User,
-    ProviderType,
-    AcceleratorType,
-)
-from transformerlab.compute_providers.config import ComputeProviderConfig, create_compute_provider
-from transformerlab.compute_providers.base import ComputeProvider
-from transformerlab.compute_providers.local import _check_nvidia_gpu, _check_amd_gpu
-import sys
-import platform
 import asyncio
+import logging
+import os
+import platform
+import sys
+from typing import List, Optional
+
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from transformerlab.compute_providers.base import ComputeProvider
+from transformerlab.compute_providers.config import ComputeProviderConfig, create_compute_provider
+from transformerlab.compute_providers.local import _check_amd_gpu, _check_nvidia_gpu
+from transformerlab.shared.models.models import AcceleratorType, ProviderType, Team, TeamComputeProvider, User, UserTeam
+
+logger = logging.getLogger(__name__)
+
+
+def _local_providers_disabled() -> bool:
+    """
+    Return True when local providers are globally disabled.
+
+    Controlled by DISABLE_LOCAL_PROVIDERS env var:
+    - "true" (case-insensitive): no local provider creation (automatic or manual).
+    - any other value (including unset): local providers are enabled.
+    """
+    return os.getenv("DISABLE_LOCAL_PROVIDERS", "").lower().strip() == "true"
 
 
 async def validate_team_exists(session: AsyncSession, team_id: str) -> None:
@@ -134,6 +143,18 @@ async def list_team_providers(session: AsyncSession, team_id: str) -> list[TeamC
     return list(result.scalars().all())
 
 
+async def list_enabled_team_providers(session: AsyncSession, team_id: str) -> list[TeamComputeProvider]:
+    """List only enabled (non-disabled) providers for a team."""
+    stmt = (
+        select(TeamComputeProvider)
+        .where(TeamComputeProvider.team_id == team_id)
+        .where(~TeamComputeProvider.disabled)
+        .order_by(TeamComputeProvider.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 def detect_local_supported_accelerators() -> List[str]:
     """
     Detect accelerators available on the current machine for the local provider.
@@ -185,6 +206,7 @@ def db_record_to_provider_config(
     record: TeamComputeProvider,
     user_slurm_user: Optional[str] = None,
     user_ssh_key_path: Optional[str] = None,
+    user_sbatch_flags: Optional[str] = None,
 ) -> ComputeProviderConfig:
     """
     Convert a database TeamComputeProvider record to a ComputeProviderConfig object.
@@ -205,14 +227,21 @@ def db_record_to_provider_config(
     # Use user's key path when provided (user uploaded private key in Provider Settings); else provider config
     ssh_key_path = user_ssh_key_path if user_ssh_key_path else config_dict.get("ssh_key_path")
 
+    # Build extra_config, merging in any user-specific settings that should flow through
+    base_extra_config = config_dict.get("extra_config", {}) or {}
+    extra_config: dict = dict(base_extra_config)
+    if user_sbatch_flags:
+        extra_config["user_sbatch_flags"] = user_sbatch_flags
+
     # Build ComputeProviderConfig from database record
     provider_config = ComputeProviderConfig(
         type=record.type,
         name=record.name,
         server_url=config_dict.get("server_url"),
         api_token=config_dict.get("api_token"),
+        dstack_project=config_dict.get("dstack_project"),
         default_env_vars=config_dict.get("default_env_vars", {}),
-        default_entrypoint_command=config_dict.get("default_entrypoint_command"),
+        default_entrypoint_run=config_dict.get("default_entrypoint_run"),
         mode=config_dict.get("mode"),
         rest_url=config_dict.get("rest_url"),
         ssh_host=config_dict.get("ssh_host"),
@@ -227,7 +256,7 @@ def db_record_to_provider_config(
         default_template_id=config_dict.get("default_template_id"),
         default_network_volume_id=config_dict.get("default_network_volume_id"),
         supported_accelerators=config_dict.get("supported_accelerators"),
-        extra_config=config_dict.get("extra_config", {}),
+        extra_config=extra_config,
     )
     # Local provider has no extra required config; workspace_dir is set at launch from get_workspace_dir()
 
@@ -261,13 +290,17 @@ async def get_provider_instance(
 
     user_slurm_user = None
     user_ssh_key_path = None
+    user_sbatch_flags = None
 
     if record.type == "slurm":
         if user_id and team_id:
             import transformerlab.db.db as db
 
-            config_key = f"provider:{record.id}:slurm_user"
-            user_slurm_user = await db.config_get(key=config_key, user_id=user_id, team_id=team_id)
+            slurm_user_key = f"provider:{record.id}:slurm_user"
+            user_slurm_user = await db.config_get(key=slurm_user_key, user_id=user_id, team_id=team_id)
+
+            custom_flags_key = f"provider:{record.id}:slurm_custom_sbatch_flags"
+            user_sbatch_flags = await db.config_get(key=custom_flags_key, user_id=user_id, team_id=team_id)
 
             # Use user's uploaded SSH private key (SSH mode) when available
             if record.config and record.config.get("mode") == "ssh":
@@ -282,7 +315,12 @@ async def get_provider_instance(
                 except Exception:
                     pass
 
-    config = db_record_to_provider_config(record, user_slurm_user=user_slurm_user, user_ssh_key_path=user_ssh_key_path)
+    config = db_record_to_provider_config(
+        record,
+        user_slurm_user=user_slurm_user,
+        user_ssh_key_path=user_ssh_key_path,
+        user_sbatch_flags=user_sbatch_flags,
+    )
     return create_compute_provider(config)
 
 
@@ -311,11 +349,15 @@ async def create_team_provider(
         Created TeamComputeProvider record
 
     Raises:
-        HTTPException: If validation fails
+        HTTPException: If validation fails or local providers are disabled
     """
     # Validate referential integrity before creating
     if validate:
         await validate_provider_data(session, team_id, created_by_user_id, validate_membership=True)
+
+    # Respect global disable flag for local providers
+    if provider_type == ProviderType.LOCAL.value and _local_providers_disabled():
+        raise HTTPException(status_code=400, detail="Local providers are disabled by server configuration.")
 
     provider = TeamComputeProvider(
         team_id=team_id, name=name, type=provider_type, config=config, created_by_user_id=created_by_user_id
@@ -323,10 +365,16 @@ async def create_team_provider(
     session.add(provider)
     await session.commit()
     await session.refresh(provider)
+
+    # NOTE: Local provider setup can be slow (uv venv + dependency install).
+    # We intentionally do not run it synchronously during provider creation.
+    # The API layer exposes a dedicated setup endpoint that runs in the background
+    # and reports progress to the UI.
+
     return provider
 
 
-async def ensure_default_local_provider_for_team(
+async def initialize_team_local_provider(
     session: AsyncSession,
     team_id: str,
     created_by_user_id: str,
@@ -345,12 +393,16 @@ async def ensure_default_local_provider_for_team(
         provider_name: Name for the local provider (default: "Local")
 
     Returns:
-        The created TeamComputeProvider record, or None if one already existed.
+        The created TeamComputeProvider record, or None if one already existed or local providers are disabled.
     """
-    # Check for existing local provider with the same name
+    # Respect global setup: disabled = no local providers at all.
+    if _local_providers_disabled():
+        return None
+
+    # Check for any existing local provider (name does not matter)
     existing_providers = await list_team_providers(session, team_id)
     for provider in existing_providers:
-        if provider.type == ProviderType.LOCAL.value and provider.name == provider_name:
+        if provider.type == ProviderType.LOCAL.value:
             return None
 
     # Detect accelerators for this machine without blocking the event loop
@@ -367,17 +419,43 @@ async def ensure_default_local_provider_for_team(
         # Validation ensures the creating user is a member of the team
         validate=True,
     )
+
+    # Run setup in the background so bootstrap-created local providers are
+    # actually usable without requiring a manual setup click in the UI.
+    async def _run_local_setup_background() -> None:
+        try:
+            provider_instance = await get_provider_instance(provider, user_id=created_by_user_id, team_id=team_id)
+            await asyncio.to_thread(provider_instance.setup)
+            # Re-detect accelerators after setup: setup installs CUDA (including nvidia-smi)
+            # via conda, so detection here gives the correct result on machines where CUDA
+            # was not yet installed when the provider was first created.
+            post_setup_accelerators = await asyncio.to_thread(detect_local_supported_accelerators)
+            post_setup_config = dict(provider.config or {})
+            post_setup_config["supported_accelerators"] = post_setup_accelerators
+            await update_team_provider(session, provider, config=post_setup_config)
+        except Exception:
+            # Best-effort bootstrap: do not fail startup if setup fails.
+            logger.warning("Background local provider setup failed", exc_info=True)
+
+    asyncio.create_task(_run_local_setup_background())
+
     return provider
 
 
 async def update_team_provider(
-    session: AsyncSession, provider: TeamComputeProvider, name: Optional[str] = None, config: Optional[dict] = None
+    session: AsyncSession,
+    provider: TeamComputeProvider,
+    name: Optional[str] = None,
+    config: Optional[dict] = None,
+    disabled: Optional[bool] = None,
 ) -> TeamComputeProvider:
     """Update an existing team provider record."""
     if name is not None:
         provider.name = name
     if config is not None:
         provider.config = config
+    if disabled is not None:
+        provider.disabled = disabled
     await session.commit()
     await session.refresh(provider)
     return provider

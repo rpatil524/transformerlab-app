@@ -1,63 +1,101 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+} from 'react';
 import Sheet from '@mui/joy/Sheet';
-import {
-  Button,
-  LinearProgress,
-  Stack,
-  Typography,
-  Card,
-  CardContent,
-  Chip,
-  Box,
-  IconButton,
-  Skeleton,
-} from '@mui/joy';
+import { Button, Stack, Typography, Box, Skeleton, Alert } from '@mui/joy';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import {
-  PlusIcon,
-  TerminalIcon,
-  PlayIcon,
-  Trash2Icon,
-  LogsIcon,
-  LibraryIcon,
-} from 'lucide-react';
+import { PlusIcon } from 'lucide-react';
 import { useSWRWithAuth as useSWR, useAPI } from 'renderer/lib/authContext';
-import { useNavigate } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router-dom';
 
 import * as chatAPI from 'renderer/lib/transformerlab-api-sdk';
 import { useExperimentInfo } from 'renderer/lib/ExperimentInfoContext';
 import { fetcher } from 'renderer/lib/transformerlab-api-sdk';
 import { useAuth } from 'renderer/lib/authContext';
 import { useNotification } from 'renderer/components/Shared/NotificationSystem';
+import SafeJSONParse from 'renderer/components/Shared/SafeJSONParse';
 import TaskTemplateList from '../Tasks/TaskTemplateList';
 import NewInteractiveTaskModal from '../Tasks/NewInteractiveTaskModal';
-import InteractiveVSCodeModal from '../Tasks/InteractiveVSCodeModal';
-import InteractiveJupyterModal from '../Tasks/InteractiveJupyterModal';
-import InteractiveVllmModal from '../Tasks/InteractiveVllmModal';
-import InteractiveSshModal from '../Tasks/InteractiveSshModal';
-import InteractiveOllamaModal from '../Tasks/InteractiveOllamaModal';
 import EditInteractiveTaskModal from '../Tasks/EditInteractiveTaskModal';
-import ViewOutputModalStreaming from '../Tasks/ViewOutputModalStreaming';
-import JobProgress from '../Tasks/JobProgress';
-import { jobChipColor } from 'renderer/lib/utils';
+import DeleteTaskConfirmModal from '../Tasks/DeleteTaskConfirmModal';
+import InteractiveJobCard from './InteractiveJobCard';
+import JobsList from '../Tasks/JobsList';
+import FileBrowserModal from '../Tasks/FileBrowserModal';
+import { API_URL } from 'renderer/lib/api-client/urls';
 
 const duration = require('dayjs/plugin/duration');
 
 dayjs.extend(duration);
 dayjs.extend(relativeTime);
 
+const NGROK_AUTH_TOKEN_SPECIAL_SECRET_KEY = '_NGROK_AUTH_TOKEN' as const;
+const NGROK_AUTH_TOKEN_SECRET_LABEL = 'ngrok auth token';
+
+const REQUIRED_SPECIAL_SECRETS = [
+  { key: '_HF_TOKEN', label: 'Hugging Face token' },
+  {
+    key: NGROK_AUTH_TOKEN_SPECIAL_SECRET_KEY,
+    label: NGROK_AUTH_TOKEN_SECRET_LABEL,
+  },
+] as const;
+
+type SpecialSecretStatus = {
+  exists?: boolean;
+};
+
+/** Interactive tasks may have no stored provider_id; prefer a remote provider over local. */
+function defaultLaunchProviderId(
+  providers: { id?: string; type?: string }[],
+): string | null {
+  if (!providers?.length) return null;
+  const remote = providers.find((p) => p.type !== 'local');
+  return remote?.id ?? providers[0]?.id ?? null;
+}
+
+/** Local interactive runs do not use ngrok; never send token placeholder or secret to the provider. */
+function omitNgrokAuthTokenForLocal(
+  env: Record<string, string> | undefined,
+  isLocalProvider: boolean,
+): Record<string, string> {
+  const out = { ...(env || {}) };
+  if (isLocalProvider) {
+    delete out.NGROK_AUTH_TOKEN;
+  }
+  return out;
+}
+
 export default function Interactive() {
   const [interactiveModalOpen, setInteractiveModalOpen] = useState(false);
+  const [interactiveModalError, setInteractiveModalError] = useState<
+    string | null
+  >(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [taskBeingEdited, setTaskBeingEdited] = useState<any | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [viewOutputFromJob, setViewOutputFromJob] = useState(-1);
-  const [interactiveJobForModal, setInteractiveJobForModal] = useState(-1);
+  const [taskToDelete, setTaskToDelete] = useState<{
+    id: string;
+    name?: string;
+  } | null>(null);
+  const [launchProgressByJobId, setLaunchProgressByJobId] = useState<
+    Record<string, { phase?: string; percent?: number; message?: string }>
+  >({});
+  const [viewFileBrowserFromJob, setViewFileBrowserFromJob] = useState<
+    string | null
+  >(null);
+  const [missingSpecialSecrets, setMissingSpecialSecrets] = useState<string[]>(
+    [],
+  );
+  const [isCheckingSpecialSecrets, setIsCheckingSpecialSecrets] =
+    useState(false);
+
   const { experimentInfo } = useExperimentInfo();
   const { addNotification } = useNotification();
   const { fetchWithAuth, team } = useAuth();
-  const navigate = useNavigate();
 
   // Trigger to force re-render when localStorage changes
   const [pendingIdsTrigger, setPendingIdsTrigger] = useState(0);
@@ -72,6 +110,10 @@ export default function Interactive() {
     () => (Array.isArray(providerListData) ? providerListData : []),
     [providerListData],
   );
+  const hasNonLocalProvider = useMemo(
+    () => providers.some((provider) => provider?.type !== 'local'),
+    [providers],
+  );
 
   useEffect(() => {
     if (providerListError) {
@@ -79,6 +121,74 @@ export default function Interactive() {
       console.error('Failed to fetch providers', providerListError);
     }
   }, [providerListError]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkSpecialSecrets = async () => {
+      setIsCheckingSpecialSecrets(true);
+
+      try {
+        const userSecretsPromise = fetchWithAuth(
+          `${API_URL()}users/me/special_secrets`,
+        );
+        const teamSecretsPromise = team?.id
+          ? fetchWithAuth(`${API_URL()}teams/${team.id}/special_secrets`)
+          : Promise.resolve(null);
+
+        const [userRes, teamRes] = await Promise.all([
+          userSecretsPromise,
+          teamSecretsPromise,
+        ]);
+
+        const userData = userRes?.ok ? await userRes.json() : null;
+        const teamData = teamRes && teamRes.ok ? await teamRes.json() : null;
+
+        const userSpecialSecrets = (userData?.special_secrets || {}) as Record<
+          string,
+          SpecialSecretStatus
+        >;
+        const teamSpecialSecrets = (teamData?.special_secrets || {}) as Record<
+          string,
+          SpecialSecretStatus
+        >;
+
+        const requiredSecrets = REQUIRED_SPECIAL_SECRETS.filter(({ key }) => {
+          if (key === NGROK_AUTH_TOKEN_SPECIAL_SECRET_KEY) {
+            return hasNonLocalProvider;
+          }
+          return true;
+        });
+
+        const missing = requiredSecrets
+          .filter(({ key }) => {
+            const userHasSecret = Boolean(userSpecialSecrets[key]?.exists);
+            const teamHasSecret = Boolean(teamSpecialSecrets[key]?.exists);
+            return !userHasSecret && !teamHasSecret;
+          })
+          .map(({ label }) => label);
+
+        if (!cancelled) {
+          setMissingSpecialSecrets(missing);
+        }
+      } catch (error) {
+        console.error('Failed to check interactive special secrets:', error);
+        if (!cancelled) {
+          setMissingSpecialSecrets([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsCheckingSpecialSecrets(false);
+        }
+      }
+    };
+
+    checkSpecialSecrets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchWithAuth, team?.id, hasNonLocalProvider]);
 
   // Pending job IDs persisted per experiment
   const pendingJobsStorageKey = useMemo(
@@ -90,15 +200,11 @@ export default function Interactive() {
   );
 
   const getPendingJobIds = useCallback((): string[] => {
-    try {
-      const raw = window.localStorage.getItem(pendingJobsStorageKey);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      const result = Array.isArray(parsed) ? parsed : [];
-      return result;
-    } catch {
-      return [];
-    }
+    const raw = window.localStorage.getItem(pendingJobsStorageKey);
+    if (!raw) return [];
+    const parsed = SafeJSONParse(raw, []);
+    const result = Array.isArray(parsed) ? parsed : [];
+    return result;
   }, [pendingJobsStorageKey]);
 
   const setPendingJobIds = useCallback(
@@ -157,6 +263,86 @@ export default function Interactive() {
     return Array.isArray(jobsRemote) ? jobsRemote : [];
   }, [jobsRemote]);
 
+  // Derive a stable string of job IDs that need launch-progress polling.
+  // This avoids resetting the 3s interval on every SWR revalidation.
+  const launchPollingJobIds = useMemo(() => {
+    if (!jobs || !Array.isArray(jobs)) return '';
+    return jobs
+      .filter(
+        (job: {
+          type?: string;
+          status?: string;
+          job_data?: { provider_id?: string };
+        }) =>
+          job.type === 'REMOTE' &&
+          job.job_data?.provider_id &&
+          (job.status === 'LAUNCHING' || job.status === 'WAITING'),
+      )
+      .map((job: { id: string | number }) => String(job.id))
+      .sort()
+      .join(',');
+  }, [jobs]);
+
+  // Keep a ref to the latest fetchWithAuth/jobsMutate so the interval callback
+  // always uses current values without being in the dependency array.
+  const fetchWithAuthRef = useRef(fetchWithAuth);
+  const jobsMutateRef = useRef(jobsMutate);
+  useEffect(() => {
+    fetchWithAuthRef.current = fetchWithAuth;
+  }, [fetchWithAuth]);
+  useEffect(() => {
+    jobsMutateRef.current = jobsMutate;
+  }, [jobsMutate]);
+
+  // Poll REMOTE jobs in LAUNCHING/WAITING for live launch_progress (same pattern as Tasks).
+  useEffect(() => {
+    if (!launchPollingJobIds || !experimentInfo?.id) return;
+
+    const ids = launchPollingJobIds.split(',');
+    const experimentId = String(experimentInfo.id);
+
+    const checkJobs = async () => {
+      for (const jobId of ids) {
+        try {
+          const response = await fetchWithAuthRef.current(
+            chatAPI.Endpoints.ComputeProvider.CheckJobStatus(
+              jobId,
+              experimentId,
+            ),
+            { method: 'GET' },
+          );
+          if (response.ok) {
+            const result = await response.json();
+            if (
+              result.current_status === 'COMPLETE' ||
+              result.current_status === 'FAILED' ||
+              result.current_status === 'STOPPED'
+            ) {
+              setLaunchProgressByJobId((prev) => {
+                const next = { ...prev };
+                delete next[jobId];
+                return next;
+              });
+              setTimeout(() => jobsMutateRef.current(), 0);
+            } else if (result.launch_progress) {
+              setLaunchProgressByJobId((prev) => ({
+                ...prev,
+                [jobId]: result.launch_progress,
+              }));
+            }
+          }
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error(`Failed to check job ${jobId}:`, error);
+        }
+      }
+    };
+
+    checkJobs();
+    const interval = setInterval(checkJobs, 3000);
+    return () => clearInterval(interval);
+  }, [launchPollingJobIds, experimentInfo?.id]);
+
   // Fetch templates with interactive subtype
   const {
     data: allTemplates,
@@ -198,9 +384,15 @@ export default function Interactive() {
   const jobsWithPlaceholders = useMemo(() => {
     const baseJobs = Array.isArray(jobs) ? jobs : [];
 
-    // Only show INTERACTIVE status jobs (not STOPPED)
+    // Show active interactive jobs
     const filteredJobs = baseJobs.filter((job: any) => {
-      return job.status === 'INTERACTIVE';
+      return (
+        job.status === 'INTERACTIVE' ||
+        job.status === 'RUNNING' ||
+        job.status === 'LAUNCHING' ||
+        job.status === 'WAITING' ||
+        job.status === 'STOPPING'
+      );
     });
 
     const pending = getPendingJobIds();
@@ -223,42 +415,54 @@ export default function Interactive() {
     return [...placeholders, ...filteredJobs];
   }, [jobs, getPendingJobIds, pendingIdsTrigger]);
 
-  const handleDeleteTask = async (taskId: string) => {
-    if (!experimentInfo?.id) return;
-
-    // eslint-disable-next-line no-alert
-    if (!confirm('Are you sure you want to delete this template?')) {
-      return;
-    }
-
-    try {
-      const response = await chatAPI.authenticatedFetch(
-        chatAPI.Endpoints.Task.DeleteTemplate(experimentInfo?.id || '', taskId),
-        {
-          method: 'GET',
-        },
+  // Completed / failed / stopped interactive jobs for the History section
+  const historyJobs = useMemo(() => {
+    const baseJobs = Array.isArray(jobs) ? jobs : [];
+    return baseJobs.filter((job: any) => {
+      return (
+        job.status === 'COMPLETE' ||
+        job.status === 'FAILED' ||
+        job.status === 'STOPPED'
       );
+    });
+  }, [jobs]);
 
-      if (response.ok) {
-        addNotification({
-          type: 'success',
-          message: 'Template deleted successfully!',
-        });
-        await templatesMutate();
-      } else {
+  const handleDeleteTask = (taskId: string, taskName?: string) => {
+    setTaskToDelete({ id: taskId, name: taskName });
+  };
+
+  const handleConfirmDeleteTask = useCallback(
+    async (taskId: string): Promise<boolean> => {
+      if (!experimentInfo?.id) return false;
+      try {
+        const response = await chatAPI.authenticatedFetch(
+          chatAPI.Endpoints.Task.DeleteTemplate(experimentInfo.id, taskId),
+          { method: 'GET' },
+        );
+        if (response.ok) {
+          addNotification({
+            type: 'success',
+            message: 'Template deleted successfully!',
+          });
+          await templatesMutate();
+          return true;
+        }
         addNotification({
           type: 'danger',
           message: 'Failed to delete template. Please try again.',
         });
+        return false;
+      } catch (error) {
+        console.error('Error deleting template:', error);
+        addNotification({
+          type: 'danger',
+          message: 'Failed to delete template. Please try again.',
+        });
+        return false;
       }
-    } catch (error) {
-      console.error('Error deleting template:', error);
-      addNotification({
-        type: 'danger',
-        message: 'Failed to delete template. Please try again.',
-      });
-    }
-  };
+    },
+    [experimentInfo?.id, addNotification, templatesMutate],
+  );
 
   const handleDeleteJob = async (jobId: string) => {
     if (!experimentInfo?.id) return;
@@ -297,6 +501,48 @@ export default function Interactive() {
     }
   };
 
+  const handleExportTemplateToTeamInteractiveGallery = useCallback(
+    async (taskId: string) => {
+      if (!experimentInfo?.id) return;
+      try {
+        const response = await chatAPI.authenticatedFetch(
+          chatAPI.Endpoints.Task.ExportToTeamGallery(experimentInfo.id),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ task_id: taskId }),
+          },
+        );
+
+        if (!response.ok) {
+          const txt = await response.text();
+          addNotification({
+            type: 'danger',
+            message: `Failed to export template: ${txt}`,
+          });
+          return;
+        }
+
+        const result = await response.json();
+        addNotification({
+          type: 'success',
+          message:
+            result?.message ||
+            'Template exported to Team Interactive Gallery successfully.',
+        });
+      } catch (error) {
+        console.error('Error exporting template:', error);
+        addNotification({
+          type: 'danger',
+          message: 'Failed to export template. Please try again.',
+        });
+      }
+    },
+    [experimentInfo?.id, addNotification],
+  );
+
   const handleSubmitInteractive = async (
     data: any,
     shouldLaunch: boolean = false,
@@ -319,13 +565,14 @@ export default function Interactive() {
       providers.find((p) => p.id === data.provider_id) || providers[0];
 
     setIsSubmitting(true);
+    setInteractiveModalError(null);
     try {
-      const interactiveType = data.interactive_type || 'vscode';
-
-      // Fetch interactive gallery to get setup and command templates
+      // Fetch interactive gallery to get setup and run templates
       let defaultSetup: string;
-      let defaultCommand: string;
+      let defaultRun: string;
       let templateId: string | undefined;
+      let template: any;
+      let galleryTemplate: any = null;
 
       try {
         const galleryResponse = await chatAPI.authenticatedFetch(
@@ -337,22 +584,26 @@ export default function Interactive() {
 
         if (galleryResponse.ok) {
           const galleryData = await galleryResponse.json();
-          const template = galleryData.data?.find((t: any) => {
+          template = galleryData.data?.find((t: any) => {
             if (data.template_id) {
               return t.id === data.template_id;
             }
-            return t.interactive_type === interactiveType;
+            return (
+              data.interactive_type &&
+              t.interactive_type === data.interactive_type
+            );
           });
 
           if (!template) {
             throw new Error(
-              `Template not found for interactive type: ${interactiveType}`,
+              `Template not found for: ${data.template_id || data.interactive_type || 'unknown'}`,
             );
           }
 
           defaultSetup = template.setup || '';
-          defaultCommand = template.command || '';
+          defaultRun = template.run || template.command || '';
           templateId = template.id;
+          galleryTemplate = template;
         } else {
           throw new Error('Failed to fetch interactive gallery');
         }
@@ -360,39 +611,109 @@ export default function Interactive() {
         throw error;
       }
 
-      // Create template with flat structure
-      // Use env_parameters from the gallery-defined structure
-      const envVars: Record<string, string> = data.env_parameters || {};
+      let response: Response;
+      let templatePayload: any = {};
 
-      const templatePayload: any = {
-        name: data.title,
-        type: 'REMOTE',
-        plugin: 'remote_orchestrator',
-        experiment_id: experimentInfo.id,
-        cluster_name: data.title,
-        command: defaultCommand,
-        cpus: data.cpus || undefined,
-        memory: data.memory || undefined,
-        accelerators: data.accelerators || undefined,
-        setup: defaultSetup,
-        subtype: 'interactive',
-        interactive_type: interactiveType,
-        interactive_gallery_id: templateId,
-        provider_id: providerMeta.id,
-        provider_name: providerMeta.name,
-        env_vars: Object.keys(envVars).length > 0 ? envVars : undefined,
-      };
-
-      const response = await chatAPI.authenticatedFetch(
-        chatAPI.Endpoints.Task.NewTemplate(experimentInfo?.id || ''),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      if (template.local_task_dir || template.github_repo_url) {
+        // Use the gallery import API which reads task.yaml and copies files,
+        // just like the "Upload from Local Directory" or GitHub import flow.
+        const envVarsForImport: Record<string, string> = {
+          ...(data.env_parameters || {}),
+        };
+        // Remote interactive tasks with exposed ports get auto-ngrok on the server; ensure the
+        // team ngrok secret is referenced (same as non-GitHub template path). ollama_gradio etc.
+        // do not list NGROK_AUTH_TOKEN in env_parameters, so it would otherwise be missing.
+        const galleryPorts = Array.isArray(template?.ports)
+          ? template.ports
+          : [];
+        const hasNgrokField = template?.env_parameters?.some(
+          (p: { env_var?: string }) => p.env_var === 'NGROK_AUTH_TOKEN',
+        );
+        const shouldInjectNgrokSecret =
+          providerMeta.type !== 'local' &&
+          !envVarsForImport.NGROK_AUTH_TOKEN?.trim() &&
+          (galleryPorts.length > 0 || hasNgrokField);
+        if (shouldInjectNgrokSecret) {
+          envVarsForImport.NGROK_AUTH_TOKEN = `{{secret.${NGROK_AUTH_TOKEN_SPECIAL_SECRET_KEY}}}`;
+        }
+        const envVarsForImportClean = omitNgrokAuthTokenForLocal(
+          envVarsForImport,
+          providerMeta.type === 'local',
+        );
+        response = await chatAPI.authenticatedFetch(
+          chatAPI.Endpoints.Task.ImportFromGallery(experimentInfo.id),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gallery_id: templateId,
+              experiment_id: experimentInfo.id,
+              name: data.title,
+              is_interactive: true,
+              env_vars:
+                Object.keys(envVarsForImportClean).length > 0
+                  ? envVarsForImportClean
+                  : undefined,
+              cpus: data.cpus || undefined,
+              memory: data.memory || undefined,
+              accelerators: data.accelerators || undefined,
+            }),
           },
-          body: JSON.stringify(templatePayload),
-        },
-      );
+        );
+      } else {
+        // Create template with flat structure
+        // Use env_parameters from the gallery-defined structure
+        const envVars: Record<string, string> = data.env_parameters || {};
+
+        // Check if the template defines NGROK_AUTH_TOKEN in its env_parameters
+        const needsNgrok = template?.env_parameters?.some(
+          (p: any) => p.env_var === 'NGROK_AUTH_TOKEN',
+        );
+        if (
+          needsNgrok &&
+          providerMeta.type !== 'local' &&
+          !envVars.NGROK_AUTH_TOKEN
+        ) {
+          envVars.NGROK_AUTH_TOKEN = `{{secret.${NGROK_AUTH_TOKEN_SPECIAL_SECRET_KEY}}}`;
+        }
+        const envVarsClean = omitNgrokAuthTokenForLocal(
+          envVars,
+          providerMeta.type === 'local',
+        );
+
+        templatePayload = {
+          name: data.title,
+          type: 'REMOTE',
+          plugin: 'remote_orchestrator',
+          experiment_id: experimentInfo.id,
+          cluster_name: data.title,
+          run: defaultRun,
+          cpus: data.cpus || undefined,
+          memory: data.memory || undefined,
+          accelerators: data.accelerators || undefined,
+          setup: defaultSetup,
+          subtype: 'interactive',
+          interactive_type: template?.interactive_type || undefined,
+          interactive_gallery_id: templateId,
+          provider_id: providerMeta.id,
+          provider_name: providerMeta.name,
+          env_vars:
+            Object.keys(envVarsClean).length > 0 ? envVarsClean : undefined,
+          github_repo_url: galleryTemplate?.github_repo_url || undefined,
+          github_repo_dir: galleryTemplate?.github_repo_dir || undefined,
+        };
+
+        response = await chatAPI.authenticatedFetch(
+          chatAPI.Endpoints.Task.CreateTemplate(experimentInfo?.id || ''),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(templatePayload),
+          },
+        );
+      }
 
       if (response.ok) {
         const result = await response.json();
@@ -400,24 +721,38 @@ export default function Interactive() {
         await templatesMutate();
 
         const interactiveTypeLabel =
-          (data.interactive_type || 'vscode') === 'jupyter'
-            ? 'Jupyter'
-            : (data.interactive_type || 'vscode') === 'vllm'
-              ? 'vLLM'
-              : (data.interactive_type || 'vscode') === 'ollama'
-                ? 'Ollama'
-                : (data.interactive_type || 'vscode') === 'ssh'
-                  ? 'SSH'
-                  : 'VS Code';
+          template?.name || data.interactive_type || 'interactive';
 
-        if (shouldLaunch && taskId) {
-          // Construct task object from payload for launching
-          const newTask = {
+        if (shouldLaunch) {
+          if (!taskId) {
+            setInteractiveModalError(
+              'Template was created, but no task ID was returned. Please refresh and try launching from the task list.',
+            );
+            return;
+          }
+
+          // Construct task object for launching. For local_task_dir imports
+          // the task metadata lives in the backend, so find it from the
+          // refreshed list instead of the (empty) templatePayload.
+          const refreshed = await templatesMutate();
+          const taskList = Array.isArray(refreshed)
+            ? refreshed
+            : (refreshed as any)?.data || [];
+          const newTask = taskList.find((t: any) => t.id === taskId) || {
             id: taskId,
             ...templatePayload,
           };
-          // Launch the task immediately
-          await handleQueue(newTask);
+
+          // Launch the task immediately. If launch fails (e.g. missing secrets),
+          // keep the modal open and show the error inline.
+          const launch = await launchInteractiveTask(newTask, {
+            provider_id: data.provider_id,
+          });
+          if (!launch.ok) {
+            setInteractiveModalError(launch.error);
+            return;
+          }
+
           addNotification({
             type: 'success',
             message: `Interactive ${interactiveTypeLabel} session launched!`,
@@ -432,36 +767,173 @@ export default function Interactive() {
         setInteractiveModalOpen(false);
       } else {
         const txt = await response.text();
-        addNotification({
-          type: 'danger',
-          message: `Failed to create interactive template: ${txt}`,
-        });
+        setInteractiveModalError(
+          `Failed to create interactive template: ${txt}`,
+        );
       }
     } catch (error) {
       console.error('Error creating interactive template:', error);
-      addNotification({
-        type: 'danger',
-        message: 'Failed to create interactive template. Please try again.',
-      });
+      setInteractiveModalError(
+        'Failed to create interactive template. Please try again.',
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const launchInteractiveTask = useCallback(
+    async (
+      task: any,
+      launchOverrides?: { provider_id?: string },
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      if (!experimentInfo?.id) {
+        return { ok: false, error: 'No experiment selected.' };
+      }
+
+      const cfg =
+        task.config !== undefined ? SafeJSONParse(task.config, task) : task;
+
+      // Prefer the provider the user picked in the modal. Imported interactive tasks
+      // (e.g. GitHub task.yaml) get provider_id from _resolve_provider on the server
+      // (often the first listed provider — frequently local), which would otherwise
+      // ignore the user's selection here.
+      const providerId =
+        launchOverrides?.provider_id ||
+        cfg.provider_id ||
+        task.provider_id ||
+        defaultLaunchProviderId(providers);
+      if (!providerId) {
+        return {
+          ok: false,
+          error:
+            'No providers available. Add a provider in the team settings first.',
+        };
+      }
+
+      const providerMeta = providers.find(
+        (provider) => provider.id === providerId,
+      );
+
+      if (!providerMeta) {
+        return {
+          ok: false,
+          error:
+            'Selected provider is unavailable. Please create or update providers in team settings.',
+        };
+      }
+
+      if (!cfg.run && !cfg.github_repo_url && !task.github_repo_url) {
+        return { ok: false, error: 'Task is missing a command to run.' };
+      }
+
+      const payload = {
+        experiment_id: experimentInfo.id,
+        task_id: task.id,
+        task_name: task.name,
+        cluster_name: cfg.cluster_name || task.cluster_name,
+        run: cfg.run || task.run,
+        subtype: cfg.subtype || task.subtype,
+        interactive_type: cfg.interactive_type || task.interactive_type,
+        interactive_gallery_id:
+          cfg.interactive_gallery_id ??
+          task?.interactive_gallery_id ??
+          undefined,
+        cpus: cfg.cpus || task.cpus,
+        memory: cfg.memory || task.memory,
+        disk_space: cfg.disk_space || task.disk_space,
+        accelerators: cfg.accelerators || task.accelerators,
+        num_nodes: cfg.num_nodes || task.num_nodes,
+        setup: cfg.setup || task.setup,
+        env_vars: omitNgrokAuthTokenForLocal(
+          { ...(cfg.env_vars || task.env_vars || {}) },
+          providerMeta.type === 'local',
+        ),
+        parameters: cfg.parameters || task.parameters || undefined,
+        file_mounts: cfg.file_mounts || task.file_mounts,
+        provider_name: providerMeta.name,
+        github_repo_url: cfg.github_repo_url || task.github_repo_url,
+        github_repo_dir: cfg.github_repo_dir || task.github_repo_dir,
+        github_repo_branch: cfg.github_repo_branch || task.github_repo_branch,
+        run_sweeps: cfg.run_sweeps || task.run_sweeps || undefined,
+        sweep_config: cfg.sweep_config || task.sweep_config || undefined,
+        sweep_metric:
+          cfg.sweep_metric ||
+          task.sweep_metric ||
+          (cfg.run_sweeps || task.run_sweeps ? 'eval/loss' : undefined),
+        lower_is_better:
+          cfg.lower_is_better !== undefined
+            ? cfg.lower_is_better
+            : task.lower_is_better !== undefined
+              ? task.lower_is_better
+              : undefined,
+        minutes_requested:
+          cfg.minutes_requested || task.minutes_requested || undefined,
+        local: providerMeta.type === 'local',
+      };
+
+      try {
+        const response = await fetchWithAuth(
+          chatAPI.Endpoints.ComputeProvider.LaunchTemplate(providerId),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          },
+        );
+
+        let launchResult: any = {};
+        try {
+          launchResult = await response.json();
+        } catch {
+          launchResult = {};
+        }
+
+        if (
+          response.ok &&
+          (launchResult?.status === 'success' ||
+            (launchResult?.status === 'WAITING' && launchResult?.job_id))
+        ) {
+          const newId = String(launchResult.job_id);
+          const pending = getPendingJobIds();
+          if (!pending.includes(newId)) {
+            setPendingJobIds([newId, ...pending]);
+          }
+          setTimeout(() => jobsMutate(), 0);
+          await Promise.all([jobsMutate(), templatesMutate()]);
+          return { ok: true };
+        }
+
+        const message =
+          launchResult?.detail ||
+          launchResult?.message ||
+          'Failed to queue provider-backed task.';
+        return { ok: false, error: String(message) };
+      } catch (e: any) {
+        console.error(e);
+        return { ok: false, error: 'Failed to queue provider-backed task.' };
+      }
+    },
+    [
+      experimentInfo?.id,
+      fetchWithAuth,
+      getPendingJobIds,
+      jobsMutate,
+      providers,
+      setPendingJobIds,
+      templatesMutate,
+    ],
+  );
+
   const handleQueue = async (task: any) => {
     if (!experimentInfo?.id) return;
 
     const cfg =
-      task.config !== undefined
-        ? typeof task.config === 'string'
-          ? JSON.parse(task.config)
-          : task.config
-        : task;
+      task.config !== undefined ? SafeJSONParse(task.config, task) : task;
 
     const providerId =
-      cfg.provider_id ||
-      task.provider_id ||
-      (providers.length ? providers[0]?.id : null);
+      cfg.provider_id || task.provider_id || defaultLaunchProviderId(providers);
     if (!providerId) {
       addNotification({
         type: 'danger',
@@ -484,10 +956,10 @@ export default function Interactive() {
       return;
     }
 
-    if (!cfg.command) {
+    if (!cfg.run && !cfg.github_repo_url && !task.github_repo_url) {
       addNotification({
         type: 'warning',
-        message: 'Task is missing a command to run.',
+        message: 'Task is missing a run command.',
       });
       return;
     }
@@ -503,13 +975,12 @@ export default function Interactive() {
         task_id: task.id,
         task_name: task.name,
         cluster_name: cfg.cluster_name || task.cluster_name,
-        command: cfg.command || task.command,
+        run: cfg.run || task.run,
         subtype: cfg.subtype || task.subtype,
         interactive_type: cfg.interactive_type || task.interactive_type,
         interactive_gallery_id:
           cfg.interactive_gallery_id ??
           task?.interactive_gallery_id ??
-          config?.interactive_gallery_id ??
           undefined,
         cpus: cfg.cpus || task.cpus,
         memory: cfg.memory || task.memory,
@@ -517,13 +988,16 @@ export default function Interactive() {
         accelerators: cfg.accelerators || task.accelerators,
         num_nodes: cfg.num_nodes || task.num_nodes,
         setup: cfg.setup || task.setup,
-        env_vars: cfg.env_vars || task.env_vars || {},
+        env_vars: omitNgrokAuthTokenForLocal(
+          { ...(cfg.env_vars || task.env_vars || {}) },
+          providerMeta.type === 'local',
+        ),
         parameters: cfg.parameters || task.parameters || undefined,
         file_mounts: cfg.file_mounts || task.file_mounts,
         provider_name: providerMeta.name,
         github_repo_url: cfg.github_repo_url || task.github_repo_url,
-        github_directory: cfg.github_directory || task.github_directory,
-        github_branch: cfg.github_branch || task.github_branch,
+        github_repo_dir: cfg.github_repo_dir || task.github_repo_dir,
+        github_repo_branch: cfg.github_repo_branch || task.github_repo_branch,
         run_sweeps: cfg.run_sweeps || task.run_sweeps || undefined,
         sweep_config: cfg.sweep_config || task.sweep_config || undefined,
         sweep_metric:
@@ -538,6 +1012,7 @@ export default function Interactive() {
               : undefined,
         minutes_requested:
           cfg.minutes_requested || task.minutes_requested || undefined,
+        local: providerMeta.type === 'local',
       };
 
       const response = await fetchWithAuth(
@@ -558,7 +1033,11 @@ export default function Interactive() {
         launchResult = {};
       }
 
-      if (response.ok && launchResult?.status === 'success') {
+      if (
+        response.ok &&
+        (launchResult?.status === 'success' ||
+          (launchResult?.status === 'WAITING' && launchResult?.job_id))
+      ) {
         const newId = String(launchResult.job_id);
         const pending = getPendingJobIds();
         if (!pending.includes(newId)) {
@@ -595,44 +1074,6 @@ export default function Interactive() {
     setEditModalOpen(true);
   };
 
-  const getInteractiveTypeLabel = (interactiveType: string) => {
-    switch (interactiveType) {
-      case 'jupyter':
-        return 'Jupyter';
-      case 'vllm':
-        return 'vLLM';
-      case 'ollama':
-        return 'Ollama';
-      case 'ssh':
-        return 'SSH';
-      case 'vscode':
-      default:
-        return 'VS Code';
-    }
-  };
-
-  const getInteractiveTypeColor = (
-    interactiveType: string,
-  ): 'primary' | 'success' | 'warning' | 'danger' | 'neutral' => {
-    switch (interactiveType) {
-      case 'jupyter':
-        return 'warning';
-      case 'vllm':
-        return 'success';
-      case 'ollama':
-        return 'primary';
-      case 'ssh':
-        return 'danger';
-      case 'vscode':
-      default:
-        return 'primary';
-    }
-  };
-
-  const handleViewInteractive = (jobId: number) => {
-    setInteractiveJobForModal(jobId);
-  };
-
   const loading = templatesIsLoading || jobsIsLoading;
 
   return (
@@ -646,7 +1087,13 @@ export default function Interactive() {
     >
       <NewInteractiveTaskModal
         open={interactiveModalOpen}
-        onClose={() => setInteractiveModalOpen(false)}
+        onClose={() => {
+          setInteractiveModalOpen(false);
+          setInteractiveModalError(null);
+          setIsSubmitting(false);
+        }}
+        submitError={interactiveModalError}
+        onClearSubmitError={() => setInteractiveModalError(null)}
         onSubmit={(data, shouldLaunch) =>
           handleSubmitInteractive(data, shouldLaunch)
         }
@@ -730,6 +1177,41 @@ export default function Interactive() {
           New
         </Button>
       </Stack>
+      {!isCheckingSpecialSecrets && missingSpecialSecrets.length > 0 && (
+        <Alert
+          color="warning"
+          variant="soft"
+          sx={{
+            mt: 1,
+            mb: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 2,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Box>
+            <Typography level="body-sm">
+              Interactive sessions may fail without required secrets. Missing:{' '}
+              <b>{missingSpecialSecrets.join(', ')}</b>.
+              {missingSpecialSecrets.includes(NGROK_AUTH_TOKEN_SECRET_LABEL) &&
+                hasNonLocalProvider &&
+                ` ${NGROK_AUTH_TOKEN_SECRET_LABEL} is required for interactive tasks on remote providers.`}{' '}
+              Set them in{' '}
+              <Typography
+                component={RouterLink}
+                to="/user/secrets"
+                level="body-sm"
+                sx={{ textDecoration: 'underline' }}
+              >
+                User Settings
+              </Typography>
+              .
+            </Typography>
+          </Box>
+        </Alert>
+      )}
       <Sheet
         variant="soft"
         sx={{
@@ -772,15 +1254,11 @@ export default function Interactive() {
               }}
             >
               <Typography level="body-lg" sx={{ mb: 2 }}>
-                No interactive jobs yet
-              </Typography>
-              <Typography level="body-sm" color="neutral" sx={{ mb: 1 }}>
-                Interactive jobs are long running services like an Inference
-                Server, VS Code or Jupyter notebook.
+                No running services
               </Typography>
               <Typography level="body-sm" color="neutral">
-                Import an interactive task from the gallery and then queue it to
-                start.
+                Click <b>New</b> to launch an interactive service such as
+                Jupyter, VS Code, or an inference server.
               </Typography>
             </Box>
           )}
@@ -797,107 +1275,14 @@ export default function Interactive() {
               gap: 2,
             }}
           >
-            {jobsWithPlaceholders.map((job: any) => {
-              const jobData = job.job_data || {};
-              const interactiveType =
-                jobData.interactive_type ||
-                (typeof jobData === 'string'
-                  ? JSON.parse(jobData || '{}')?.interactive_type
-                  : null) ||
-                'vscode';
-
-              return (
-                <Card key={job.id} variant="outlined" sx={{ height: '100%' }}>
-                  <CardContent>
-                    <Stack spacing={2}>
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        alignItems="center"
-                        flexWrap="wrap"
-                      >
-                        <Typography
-                          level="title-md"
-                          sx={{ flex: 1, minWidth: 0 }}
-                        >
-                          {jobData.cluster_name ||
-                            jobData.template_name ||
-                            `Job ${job.id}`}
-                        </Typography>
-                        <Chip
-                          variant="soft"
-                          color={jobChipColor(job.status)}
-                          size="sm"
-                        >
-                          {job.status}
-                        </Chip>
-                        <Chip
-                          variant="soft"
-                          color={getInteractiveTypeColor(interactiveType)}
-                          size="sm"
-                        >
-                          {getInteractiveTypeLabel(interactiveType)}
-                        </Chip>
-                      </Stack>
-                      <Box>
-                        <JobProgress job={job} />
-                      </Box>
-                      {jobData.start_time && (
-                        <Typography level="body-xs" color="neutral">
-                          Started:{' '}
-                          {dayjs(jobData.start_time)
-                            .local()
-                            .format('MMM D, YYYY HH:mm:ss')}
-                        </Typography>
-                      )}
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        justifyContent="flex-end"
-                      >
-                        {job.status === 'INTERACTIVE' &&
-                          (interactiveType === 'vscode' ||
-                            interactiveType === 'jupyter' ||
-                            interactiveType === 'vllm' ||
-                            interactiveType === 'ollama' ||
-                            interactiveType === 'ssh') && (
-                            <>
-                              <Button
-                                variant="plain"
-                                size="sm"
-                                startDecorator={<LogsIcon size={16} />}
-                                onClick={() =>
-                                  setViewOutputFromJob(parseInt(job.id, 10))
-                                }
-                              >
-                                Output
-                              </Button>
-                              <Button
-                                variant="soft"
-                                color="primary"
-                                size="sm"
-                                onClick={() =>
-                                  handleViewInteractive(parseInt(job.id, 10))
-                                }
-                              >
-                                Interactive Setup
-                              </Button>
-                            </>
-                          )}
-                        <IconButton
-                          variant="plain"
-                          color="danger"
-                          size="sm"
-                          onClick={() => handleDeleteJob(String(job.id))}
-                        >
-                          <Trash2Icon size={16} />
-                        </IconButton>
-                      </Stack>
-                    </Stack>
-                  </CardContent>
-                </Card>
-              );
-            })}
+            {jobsWithPlaceholders.map((job: any) => (
+              <InteractiveJobCard
+                key={job.id}
+                job={job}
+                onDeleteJob={handleDeleteJob}
+                launchProgress={launchProgressByJobId[String(job.id)]}
+              />
+            ))}
           </Box>
         )}
       </Sheet>
@@ -913,73 +1298,43 @@ export default function Interactive() {
           overflow: 'auto',
         }}
       >
+        <JobsList
+          jobs={historyJobs}
+          loading={jobsIsLoading || !experimentInfo?.id}
+          onDeleteJob={handleDeleteJob}
+          hideOutputButton
+          hideJobId
+          showInteractiveType
+          onViewFileBrowser={(jobId) => {
+            if (jobId == null || jobId === '') return;
+            setViewFileBrowserFromJob(String(jobId));
+          }}
+        />
+        {/* TODO: remove TaskTemplateList once migration is complete
         <TaskTemplateList
           tasksList={tasks}
           onDeleteTask={handleDeleteTask}
           onQueueTask={handleQueue}
           onEditTask={handleEditTask}
+          onExportTask={handleExportTemplateToTeamInteractiveGallery}
           loading={templatesIsLoading || !experimentInfo?.id}
+          interactTasks
         />
+        */}
       </Sheet>
-      <ViewOutputModalStreaming
-        jobId={viewOutputFromJob}
-        setJobId={(jobId: number) => setViewOutputFromJob(jobId)}
-        tabs={['provider']}
+      <DeleteTaskConfirmModal
+        open={taskToDelete !== null}
+        onClose={() => setTaskToDelete(null)}
+        taskId={taskToDelete?.id ?? null}
+        taskName={taskToDelete?.name ?? null}
+        onConfirm={handleConfirmDeleteTask}
       />
-      {(() => {
-        const job = jobs.find(
-          (j: any) => String(j.id) === String(interactiveJobForModal),
-        );
-        const interactiveType =
-          job?.job_data?.interactive_type ||
-          (typeof job?.job_data === 'string'
-            ? JSON.parse(job?.job_data || '{}')?.interactive_type
-            : null) ||
-          'vscode';
-
-        if (interactiveType === 'jupyter') {
-          return (
-            <InteractiveJupyterModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-            />
-          );
-        }
-
-        if (interactiveType === 'vllm') {
-          return (
-            <InteractiveVllmModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-            />
-          );
-        }
-
-        if (interactiveType === 'ssh') {
-          return (
-            <InteractiveSshModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-            />
-          );
-        }
-
-        if (interactiveType === 'ollama') {
-          return (
-            <InteractiveOllamaModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-            />
-          );
-        }
-
-        return (
-          <InteractiveVSCodeModal
-            jobId={interactiveJobForModal}
-            setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-          />
-        );
-      })()}
+      <FileBrowserModal
+        mode="job"
+        open={viewFileBrowserFromJob !== null}
+        onClose={() => setViewFileBrowserFromJob(null)}
+        jobId={viewFileBrowserFromJob ?? ''}
+      />
     </Sheet>
   );
 }

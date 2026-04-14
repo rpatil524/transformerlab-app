@@ -34,7 +34,7 @@ const configuration: webpack.Configuration = {
     path: webpackPaths.distCloudPath,
     publicPath: './',
     // Use [name] so Webpack can create multiple files
-    filename: '[name].js',
+    filename: '[name].[contenthash:8].js',
     library: {
       type: 'umd',
     },
@@ -149,15 +149,15 @@ const configuration: webpack.Configuration = {
     new webpack.EnvironmentPlugin({
       NODE_ENV: 'production',
       DEBUG_PROD: false,
-      MULTIUSER: 'true',
       TL_API_URL: '',
+      TL_DISABLE_UPDATE_CHECK: '',
       EMAIL_AUTH_ENABLED: 'true',
       SENTRY_DSN: '',
       SENTRY_ENABLE_TRACING: 'false',
     }),
 
     new MiniCssExtractPlugin({
-      filename: 'style.css',
+      filename: 'style.[contenthash:8].css',
     }),
 
     new BundleAnalyzerPlugin({

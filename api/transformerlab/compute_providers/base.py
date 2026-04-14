@@ -1,7 +1,7 @@
 """Abstract base class for provider implementations."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from .models import (
     ClusterConfig,
     JobConfig,
@@ -25,6 +25,11 @@ class ComputeProvider(ABC):
 
         Returns:
             Dictionary with launch result (e.g., request_id, cluster_name)
+
+        Raises:
+            Exception: If the launch fails for any reason (connection error,
+                authentication failure, etc.). Raise an exception rather than
+                returning an error dict so callers can handle failures uniformly.
         """
         raise NotImplementedError
 
@@ -160,3 +165,44 @@ class ComputeProvider(ABC):
             True if the provider is active and accessible, False otherwise
         """
         raise NotImplementedError
+
+    def get_request_logs(
+        self,
+        request_id: str,
+        tail_lines: Optional[int] = None,
+    ) -> str:
+        """
+        Get logs for a provider-level request (e.g. a launch or setup operation).
+
+        Not all providers support this. The default raises NotImplementedError.
+        Providers that track operations by request ID should override this.
+
+        Args:
+            request_id: The provider request/operation ID
+            tail_lines: Number of lines to retrieve from the end (None for all)
+
+        Returns:
+            Log content as a string
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support request logs")
+
+    def setup(
+        self,
+        progress_callback: Optional[Callable[[str, int, str], None]] = None,
+        force_refresh: bool = False,
+    ) -> None:
+        """
+        Optional provider-level setup hook.
+
+        Providers can override this to perform any expensive one-time or
+        infrequent initialization (for example creating base environments or
+        warming caches). The default implementation is a no-op.
+
+        Args:
+            progress_callback: Optional callback accepting (phase, percent, message)
+                for reporting coarse-grained progress to callers.
+            force_refresh: Whether to force setup even if provider-level setup
+                artifacts already exist.
+        """
+        # Default implementation intentionally does nothing.
+        return None

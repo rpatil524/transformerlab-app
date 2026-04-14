@@ -1,18 +1,21 @@
-from lab import Experiment, Job
-from lab.dirs import get_jobs_dir
+from lab import Experiment
 from lab import storage
 from lab import HOME_DIR
-from lab import dirs as lab_dirs
 
 from sqlalchemy import select
 from transformerlab.shared.models.user_model import AsyncSessionLocal, create_personal_team
 from transformerlab.shared.models.models import User, UserTeam, TeamRole
-from transformerlab.services.provider_service import ensure_default_local_provider_for_team
+from transformerlab.services.provider_service import initialize_team_local_provider
+from transformerlab.services.team_service import get_all_team_ids
 from transformerlab.models.users import UserManager, UserCreate
 from fastapi_users.db import SQLAlchemyUserDatabase
+from lab.dirs import set_organization_id as lab_set_org_id
 import os
 import shutil
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def seed_default_admin_user():
@@ -58,7 +61,7 @@ async def seed_default_admin_user():
 
                 # Ensure a default local provider exists for this team
                 try:
-                    await ensure_default_local_provider_for_team(session, team_id, str(admin_user_id))
+                    await initialize_team_local_provider(session, team_id, str(admin_user_id))
                 except Exception as e:
                     print(f"⚠️  Failed to create default local provider for existing admin team {team_id}: {e}")
 
@@ -116,7 +119,7 @@ async def seed_default_admin_user():
 
             # Ensure a default local provider exists for this team
             try:
-                await ensure_default_local_provider_for_team(session, team_id, str(admin_user_id))
+                await initialize_team_local_provider(session, team_id, str(admin_user_id))
             except Exception as e:
                 print(f"⚠️  Failed to create default local provider for admin team {team_id}: {e}")
 
@@ -353,68 +356,34 @@ def update_diffusion_history_paths(old_workspace: str, new_workspace: str):
 
 async def seed_default_experiments():
     """Create a few default experiments if they do not exist (filesystem-backed)."""
-    # Only seed default experiments if there are no experiments at all
-    try:
-        existing_experiments = await Experiment.get_all()
-        if len(existing_experiments) > 0:
-            return
-    except Exception as e:
-        print(f"Error getting existing experiments: {e}, will seed default experiments")
-        pass
+    team_ids = await get_all_team_ids()
+    if not team_ids:
+        return
 
-    for name in ["alpha", "beta", "gamma"]:
+    for team_id in team_ids:
         try:
-            exp = await Experiment.create_or_get(name, create_new=True)
-            # Sanity check to make sure nothing went wrong or no Exception was silently passed
-            if exp.id != name:
-                raise Exception(f"Error creating experiment {name}: {exp.id} != {name}")
+            if lab_set_org_id is not None:
+                lab_set_org_id(team_id)
+
+            # Only seed defaults for this org if it has no experiments yet.
+            try:
+                existing_experiments = await Experiment.get_all()
+                if len(existing_experiments) > 0:
+                    continue
+            except Exception as e:
+                print(f"Error getting existing experiments for team {team_id}: {e}, will seed default experiments")
+
+            for name in ["alpha", "beta", "gamma"]:
+                try:
+                    exp = await Experiment.create_or_get(name, create_new=True)
+                    # Sanity check to make sure nothing went wrong or no Exception was silently passed
+                    if exp.id != name:
+                        raise Exception(f"Error creating experiment {name}: {exp.id} != {name}")
+                except Exception as e:
+                    # Best-effort seeding; ignore errors (e.g., partial setups)
+                    print(f"Error creating experiment {name} for team {team_id}: {e}")
         except Exception as e:
-            # Best-effort seeding; ignore errors (e.g., partial setups)
-            print(f"Error creating experiment {name}: {e}")
-            pass
-
-
-async def cancel_in_progress_jobs():
-    """On startup, mark any RUNNING jobs as CANCELLED in the filesystem job store across all organizations.
-    REMOTE jobs are excluded from this cancellation as they run on external compute providers."""
-    # Check all org directories (localfs-aware)
-    orgs_dir = lab_dirs.get_orgs_base_dir()
-    if await storage.exists(orgs_dir) and await storage.isdir(orgs_dir):
-        try:
-            org_entries = await storage.ls(orgs_dir, detail=False)
-            for org_path in org_entries:
-                if await storage.isdir(org_path):
-                    org_id = org_path.rstrip("/").split("/")[-1]
-
-                    # Set org context to check jobs for this org
-                    lab_dirs.set_organization_id(org_id)
-
-                    try:
-                        jobs_dir = await get_jobs_dir()
-                        if await storage.exists(jobs_dir):
-                            entries = await storage.ls(jobs_dir, detail=False)
-                            for entry_path in entries:
-                                if await storage.isdir(entry_path):
-                                    try:
-                                        # Extract the job ID from the path
-                                        job_id = entry_path.rstrip("/").split("/")[-1]
-                                        job = await Job.get(job_id)
-                                        if await job.get_status() == "RUNNING":
-                                            # Skip REMOTE jobs - they should not be cancelled on startup
-                                            job_data = await job.get_json_data(uncached=True)
-                                            job_type = job_data.get("type", "")
-                                            if job_type == "REMOTE":
-                                                print(f"Skipping REMOTE job: {job_id} (org: {org_id})")
-                                            else:
-                                                await job.update_status("CANCELLED")
-                                                print(f"Cancelled running job: {job_id} (org: {org_id})")
-                                    except Exception:
-                                        # If we can't access the job, continue to the next one
-                                        pass
-                    except Exception:
-                        continue
-        except Exception:
-            pass
-
-    # Clear org context
-    lab_dirs.set_organization_id(None)
+            logger.warning(f"Error seeding default experiments for team {team_id}: {e}")
+        finally:
+            if lab_set_org_id is not None:
+                lab_set_org_id(None)

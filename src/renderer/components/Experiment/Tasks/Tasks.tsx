@@ -1,11 +1,16 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Sheet from '@mui/joy/Sheet';
 
-import { Button, LinearProgress, Skeleton, Stack, Typography } from '@mui/joy';
+import {
+  Button,
+  IconButton,
+  LinearProgress,
+  Skeleton,
+  Stack,
+  Typography,
+} from '@mui/joy';
 
-import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
-import { PlusIcon, TerminalIcon } from 'lucide-react';
+import { PlusIcon, TerminalIcon, BookmarkIcon } from 'lucide-react';
 import { useSWRWithAuth as useSWR, useAPI } from 'renderer/lib/authContext';
 
 import * as chatAPI from 'renderer/lib/transformerlab-api-sdk';
@@ -17,29 +22,28 @@ import { analytics } from 'renderer/components/Shared/analytics/AnalyticsContext
 import TaskTemplateList from './TaskTemplateList';
 import JobsList from './JobsList';
 import NewInteractiveTaskModal from './NewInteractiveTaskModal';
-import InteractiveVSCodeModal from './InteractiveVSCodeModal';
-import InteractiveJupyterModal from './InteractiveJupyterModal';
-import InteractiveVllmModal from './InteractiveVllmModal';
-import InteractiveSshModal from './InteractiveSshModal';
-import InteractiveOllamaModal from './InteractiveOllamaModal';
+import InteractiveModal from './InteractiveModal';
 import EditInteractiveTaskModal from './EditInteractiveTaskModal';
+import DeleteTaskConfirmModal from './DeleteTaskConfirmModal';
 import QueueTaskModal from './QueueTaskModal';
 import ViewOutputModalStreaming from './ViewOutputModalStreaming';
-import ViewArtifactsModal from '../Train/ViewArtifactsModal';
-import ViewCheckpointsModal from '../Train/ViewCheckpointsModal';
+import ViewCheckpointsModal from './ViewCheckpointsModal';
 import ViewEvalResultsModal from './ViewEvalResultsModal';
+import CompareEvalResultsModal from './CompareEvalResultsModal';
 import PreviewDatasetModal from '../../Data/PreviewDatasetModal';
 import ViewSweepResultsModal from './ViewSweepResultsModal';
-import ViewJobDatasetsModal from '../Train/ViewJobDatasetsModal';
-import ViewJobModelsModal from '../Train/ViewJobModelsModal';
+import JobArtifactsModal from './JobArtifacts/JobArtifactsModal';
+import FileBrowserModal from './FileBrowserModal';
 import SafeJSONParse from '../../Shared/SafeJSONParse';
 import NewTaskModal2 from './NewTaskModal/NewTaskModal2';
 import TaskYamlEditorModal from './TaskYamlEditorModal';
+import TrackioModal from './TrackioModal';
+import { isDeletableJobRecordStatus } from 'renderer/lib/utils';
 
 const duration = require('dayjs/plugin/duration');
+const dayjs = require('dayjs');
 
 dayjs.extend(duration);
-dayjs.extend(relativeTime);
 
 export default function Tasks({ subtype }: { subtype?: string }) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -49,23 +53,52 @@ export default function Tasks({ subtype }: { subtype?: string }) {
   const [queueModalOpen, setQueueModalOpen] = useState(false);
   const [taskBeingQueued, setTaskBeingQueued] = useState<any | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [viewOutputFromJob, setViewOutputFromJob] = useState(-1);
-  const [currentTensorboardForModal, setCurrentTensorboardForModal] =
-    useState(-1);
-  const [viewCheckpointsFromJob, setViewCheckpointsFromJob] = useState(-1);
-  const [viewArtifactsFromJob, setViewArtifactsFromJob] = useState(-1);
-  const [viewEvalImagesFromJob, setViewEvalImagesFromJob] = useState(-1);
+  const [viewOutputFromJob, setViewOutputFromJob] = useState<string | null>(
+    null,
+  );
+  const [viewCheckpointsFromJob, setViewCheckpointsFromJob] = useState<
+    string | null
+  >(null);
+  const [viewEvalImagesFromJob, setViewEvalImagesFromJob] = useState<
+    string | null
+  >(null);
   const [viewOutputFromSweepJob, setViewOutputFromSweepJob] = useState(false);
-  const [viewSweepResultsFromJob, setViewSweepResultsFromJob] = useState(-1);
-  const [viewEvalResultsFromJob, setViewEvalResultsFromJob] = useState(-1);
-  const [interactiveJobForModal, setInteractiveJobForModal] = useState(-1);
-  const [viewJobDatasetsFromJob, setViewJobDatasetsFromJob] = useState(-1);
-  const [viewJobModelsFromJob, setViewJobModelsFromJob] = useState(-1);
+  const [viewSweepResultsFromJob, setViewSweepResultsFromJob] = useState<
+    string | null
+  >(null);
+  const [viewEvalResultsFromJob, setViewEvalResultsFromJob] = useState<
+    string | null
+  >(null);
+  const [interactiveJobForModal, setInteractiveJobForModal] = useState<
+    string | null
+  >(null);
+  const [viewAllArtifactsFromJob, setViewAllArtifactsFromJob] = useState<
+    string | null
+  >(null);
   const [previewDatasetModal, setPreviewDatasetModal] = useState<{
     open: boolean;
     datasetId: string | null;
   }>({ open: false, datasetId: null });
+  const [trackioJobIdForModal, setTrackioJobIdForModal] = useState<
+    string | null
+  >(null);
+  const [compareEvalJobIds, setCompareEvalJobIds] = useState<string[]>([]);
+  const [isCompareSelectMode, setIsCompareSelectMode] = useState(false);
+  const [compareEvalModalOpen, setCompareEvalModalOpen] = useState(false);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [viewFileBrowserFromJob, setViewFileBrowserFromJob] = useState<
+    string | null
+  >(null);
+  const [viewTaskFilesFromTask, setViewTaskFilesFromTask] = useState<{
+    id: string | null;
+    name?: string | null;
+  }>({ id: null, name: null });
   const [yamlEditorTaskId, setYamlEditorTaskId] = useState<string | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<{
+    id: string;
+    name?: string;
+  } | null>(null);
   const { experimentInfo } = useExperimentInfo();
   const { addNotification } = useNotification();
   const { fetchWithAuth, team } = useAuth();
@@ -148,16 +181,18 @@ export default function Tasks({ subtype }: { subtype?: string }) {
   // Listen for custom event to open job output modal from interactive modals
   useEffect(() => {
     const handleOpenJobOutput = (e: Event) => {
-      const customEvent = e as CustomEvent<{ jobId: number }>;
-      const jobId = customEvent.detail?.jobId;
-      if (jobId && jobId !== -1) {
+      const customEvent = e as CustomEvent<{ jobId?: unknown }>;
+      const rawJobId = customEvent.detail?.jobId;
+      const jobIdStr =
+        rawJobId === null || rawJobId === undefined ? '' : String(rawJobId);
+      if (jobIdStr && jobIdStr !== '-1' && jobIdStr !== 'NaN') {
         // Close the interactive modal first
-        setInteractiveJobForModal(-1);
+        setInteractiveJobForModal(null);
         // Wait for the modal to close (MUI modals have transition animations)
         // Use a longer delay to ensure the interactive modal fully closes
         // before opening the output modal to avoid z-index/stacking issues
         setTimeout(() => {
-          setViewOutputFromJob(jobId);
+          setViewOutputFromJob(jobIdStr);
         }, 300); // 300ms should be enough for modal close animation
       }
     };
@@ -172,18 +207,23 @@ export default function Tasks({ subtype }: { subtype?: string }) {
 
   const isInteractivePage = subtype === 'interactive';
 
-  // Define the callback outside the IIFE to ensure it's always available
-  const handleOpenOutputFromInteractive = useCallback(
-    (outputJobId: number) => {
-      // Close the interactive modal first
-      setInteractiveJobForModal(-1);
-      // Wait for modal close animation, then open output modal
-      setTimeout(() => {
-        setViewOutputFromJob(outputJobId);
-      }, 300);
-    },
-    [interactiveJobForModal],
-  );
+  const isInteractiveTemplate = useCallback((task: any): boolean => {
+    const config =
+      typeof task?.config === 'string'
+        ? SafeJSONParse(task.config, {})
+        : (task?.config ?? {});
+    return (
+      (task as any)?.subtype === 'interactive' ||
+      config?.subtype === 'interactive' ||
+      Boolean((task as any)?.interactive_type) ||
+      Boolean(config?.interactive_type)
+    );
+  }, []);
+
+  const isInteractiveJob = useCallback((job: any): boolean => {
+    const jobData = job?.job_data || {};
+    return jobData?.subtype === 'interactive' || job?.status === 'INTERACTIVE';
+  }, []);
 
   const handleOpen = () => {
     if (isInteractivePage) {
@@ -225,14 +265,14 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     },
   );
 
-  // Fetch SWEEP jobs using sweep-status endpoint (which also updates their status)
+  // Fetch SWEEP jobs using sweep-status endpoint (status is updated by backend background worker)
   const { data: sweepStatusData, mutate: jobsSweepMutate } = useSWR(
     experimentInfo?.id
       ? chatAPI.Endpoints.ComputeProvider.CheckSweepStatus(experimentInfo.id)
       : null,
     fetcher,
     {
-      refreshInterval: 3000,
+      refreshInterval: 10000,
       revalidateOnFocus: false,
       revalidateOnReconnect: true,
       refreshWhenHidden: true,
@@ -275,6 +315,15 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         : chatAPI.Endpoints.Task.List(experimentInfo.id)
       : null,
     fetcher,
+    {
+      // Tasks (templates) change relatively infrequently; use a modest polling interval
+      // and rely on backend cache + explicit invalidation for freshness.
+      refreshInterval: 10000, // 10s
+      revalidateOnFocus: false,
+      revalidateOnReconnect: true,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    },
   );
 
   // Filter templates for this experiment only (if no subtype filter was applied)
@@ -286,68 +335,27 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         return template.experiment_id === experimentInfo?.id;
       }) || [];
 
-  // Check each LAUNCHING and recently completed REMOTE job individually via provider endpoints
-  useEffect(() => {
-    if (!jobs || !Array.isArray(jobs)) return;
+  const visibleTasks = useMemo(() => {
+    if (subtype) return tasks;
+    return tasks.filter((t: any) => !isInteractiveTemplate(t));
+  }, [isInteractiveTemplate, subtype, tasks]);
 
-    const now = dayjs();
-    const RECENT_COMPLETION_WINDOW_MINUTES = 5; // Only check jobs completed within last 5 minutes
-
-    const jobsToCheck = jobs.filter((job: any) => {
-      // Must be REMOTE type with provider_id
-      if (job.type !== 'REMOTE' || !job.job_data?.provider_id) {
-        return false;
+  // Build launch progress map directly from polled jobs payload to avoid
+  // N+1 per-job status calls from the tasks page.
+  const launchProgressByJobId = useMemo(() => {
+    if (!Array.isArray(jobs)) return {};
+    const out: Record<
+      string,
+      { phase?: string; percent?: number; message?: string }
+    > = {};
+    for (const job of jobs as any[]) {
+      const launchProgress = job?.job_data?.launch_progress;
+      if (launchProgress) {
+        out[String(job.id)] = launchProgress;
       }
-
-      // Always check LAUNCHING jobs
-      if (job.status === 'LAUNCHING') {
-        return true;
-      }
-
-      // Only check COMPLETE jobs that finished recently (to ensure quota is recorded)
-      if (job.status === 'COMPLETE' && job.job_data?.end_time) {
-        const endTime = dayjs(job.job_data.end_time);
-        const minutesSinceCompletion = now.diff(endTime, 'minute', true);
-        return (
-          minutesSinceCompletion >= 0 &&
-          minutesSinceCompletion <= RECENT_COMPLETION_WINDOW_MINUTES
-        );
-      }
-
-      return false;
-    });
-
-    if (jobsToCheck.length === 0) return;
-
-    // Check each job individually
-    const checkJobs = async () => {
-      for (const job of jobsToCheck) {
-        try {
-          const response = await fetchWithAuth(
-            chatAPI.Endpoints.ComputeProvider.CheckJobStatus(String(job.id)),
-            { method: 'GET' },
-          );
-          if (response.ok) {
-            const result = await response.json();
-            // If job was updated to COMPLETE, refresh jobs list
-            if (result.updated && result.new_status === 'COMPLETE') {
-              setTimeout(() => jobsMutate(), 0);
-            }
-            // For completed jobs, check-status will ensure quota is recorded if missing
-          }
-        } catch (error) {
-          // Silently ignore errors for individual job checks
-          console.error(`Failed to check job ${job.id}:`, error);
-        }
-      }
-    };
-
-    // Check immediately and then every 10 seconds
-    checkJobs();
-    const interval = setInterval(checkJobs, 10000);
-
-    return () => clearInterval(interval);
-  }, [jobs, fetchWithAuth, jobsMutate]);
+    }
+    return out;
+  }, [jobs]);
 
   // // Periodically ensure quota is recorded for all completed REMOTE jobs
   // useEffect(() => {
@@ -381,9 +389,6 @@ export default function Tasks({ subtype }: { subtype?: string }) {
   //   return () => clearInterval(interval);
   // }, [experimentInfo?.id, fetchWithAuth, jobsMutate]);
 
-  // Note: SWEEP job status is automatically updated when fetching via sweep-status endpoint
-  // No separate status check needed - the endpoint updates and returns all SWEEP jobs
-
   const loading = templatesIsLoading || jobsIsLoading;
 
   // Remove any pending placeholders that are now present in jobs
@@ -410,6 +415,8 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         const jobData = job.job_data || {};
         return jobData.subtype === subtype;
       });
+    } else {
+      filteredJobs = baseJobs.filter((job: any) => !isInteractiveJob(job));
     }
 
     // Read directly from localStorage to avoid state dependency issues
@@ -438,48 +445,72 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     // Show newest first consistent with existing ordering if any
     const combined = [...placeholders, ...filteredJobs];
     return combined;
-  }, [jobs, getPendingJobIds, subtype, pendingIdsTrigger]);
+  }, [getPendingJobIds, isInteractiveJob, jobs, pendingIdsTrigger, subtype]);
 
-  const handleDeleteTask = async (taskId: string) => {
-    if (!experimentInfo?.id) return;
-
-    // eslint-disable-next-line no-alert
-    if (!confirm('Are you sure you want to delete this template?')) {
-      return;
+  const filteredJobsForDisplay = useMemo(() => {
+    let result = jobsWithPlaceholders;
+    if (showFavoritesOnly) {
+      result = result.filter((j: any) => j?.job_data?.favorite);
     }
+    if (!showHidden) {
+      result = result.filter((j: any) => !j?.job_data?.hidden);
+    }
+    return result;
+  }, [jobsWithPlaceholders, showFavoritesOnly, showHidden]);
 
-    try {
-      const response = await chatAPI.authenticatedFetch(
-        chatAPI.Endpoints.Task.DeleteTemplate(experimentInfo?.id || '', taskId),
-        {
-          method: 'GET',
-        },
-      );
+  const hiddenJobCount = useMemo(() => {
+    return jobsWithPlaceholders.filter((j: any) => j?.job_data?.hidden).length;
+  }, [jobsWithPlaceholders]);
 
-      if (response.ok) {
-        addNotification({
-          type: 'success',
-          message: 'Template deleted successfully!',
-        });
-        // Refresh the data to remove the deleted template
-        await templatesMutate();
-      } else {
+  const handleDeleteTask = (taskId: string, taskName?: string) => {
+    setTaskToDelete({ id: taskId, name: taskName });
+  };
+
+  const handleConfirmDeleteTask = useCallback(
+    async (taskId: string): Promise<boolean> => {
+      if (!experimentInfo?.id) return false;
+      try {
+        const response = await fetchWithAuth(
+          chatAPI.Endpoints.Task.DeleteTemplate(experimentInfo.id, taskId),
+          { method: 'GET' },
+        );
+        if (response.ok) {
+          addNotification({
+            type: 'success',
+            message: 'Template deleted successfully!',
+          });
+          await templatesMutate();
+          return true;
+        }
         addNotification({
           type: 'danger',
           message: 'Failed to delete template. Please try again.',
         });
+        return false;
+      } catch (error) {
+        console.error('Error deleting template:', error);
+        addNotification({
+          type: 'danger',
+          message: 'Failed to delete template. Please try again.',
+        });
+        return false;
       }
-    } catch (error) {
-      console.error('Error deleting template:', error);
-      addNotification({
-        type: 'danger',
-        message: 'Failed to delete template. Please try again.',
-      });
-    }
-  };
+    },
+    [experimentInfo?.id, addNotification, templatesMutate, fetchWithAuth],
+  );
 
   const handleDeleteJob = async (jobId: string) => {
     if (!experimentInfo?.id) return;
+
+    const target = jobs.find((j) => String(j.id) === String(jobId));
+    if (!target || !isDeletableJobRecordStatus(target.status)) {
+      addNotification({
+        type: 'warning',
+        message:
+          'You can only delete jobs that have not started yet or have finished (complete, stopped, failed, or cancelled). Stop the job first if it is still running.',
+      });
+      return;
+    }
 
     // eslint-disable-next-line no-alert
     if (!confirm('Are you sure you want to delete this job?')) {
@@ -487,7 +518,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     }
 
     try {
-      const response = await chatAPI.authenticatedFetch(
+      const response = await fetchWithAuth(
         chatAPI.Endpoints.Jobs.Delete(experimentInfo.id, jobId),
         {
           method: 'GET',
@@ -516,9 +547,72 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     }
   };
 
+  const updateJobDataOptimistic = (
+    jobId: string,
+    field: string,
+    value: any,
+  ) => {
+    // Optimistically update local SWR data so the UI reflects the change instantly
+    jobsMutate(
+      (currentData: any) => {
+        if (!Array.isArray(currentData)) return currentData;
+        return currentData.map((job: any) => {
+          if (String(job.id) !== String(jobId)) return job;
+          const jobData =
+            typeof job.job_data === 'string'
+              ? JSON.parse(job.job_data)
+              : { ...job.job_data };
+          jobData[field] = value;
+          return { ...job, job_data: jobData };
+        });
+      },
+      { revalidate: false },
+    );
+  };
+
+  const handleToggleFavorite = async (jobId: string, currentValue: boolean) => {
+    if (!experimentInfo?.id) return;
+    const newValue = !currentValue;
+    updateJobDataOptimistic(jobId, 'favorite', newValue);
+    try {
+      await fetchWithAuth(
+        chatAPI.Endpoints.Jobs.UpdateJobData(experimentInfo.id, jobId),
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: { favorite: newValue } }),
+        },
+      );
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
+      // Revert on failure
+      updateJobDataOptimistic(jobId, 'favorite', currentValue);
+    }
+  };
+
+  const handleToggleHidden = async (jobId: string, currentValue: boolean) => {
+    if (!experimentInfo?.id) return;
+    const newValue = !currentValue;
+    updateJobDataOptimistic(jobId, 'hidden', newValue);
+    try {
+      await fetchWithAuth(
+        chatAPI.Endpoints.Jobs.UpdateJobData(experimentInfo.id, jobId),
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: { hidden: newValue } }),
+        },
+      );
+    } catch (error) {
+      console.error('Error toggling hidden:', error);
+      // Revert on failure
+      updateJobDataOptimistic(jobId, 'hidden', currentValue);
+    }
+  };
+
   const handleExportToTeamGallery = async (taskId: string) => {
     try {
-      const response = await chatAPI.authenticatedFetch(
+      const response = await fetchWithAuth(
         chatAPI.Endpoints.Task.ExportToTeamGallery(experimentInfo?.id || ''),
         {
           method: 'POST',
@@ -588,7 +682,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         plugin: 'remote_orchestrator',
         experiment_id: experimentInfo.id,
         cluster_name: data.cluster_name,
-        command: data.command,
+        run: data.run,
         cpus: data.cpus || undefined,
         memory: data.memory || undefined,
         disk_space: data.disk_space || undefined,
@@ -599,8 +693,8 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         parameters: data.parameters || undefined,
         file_mounts: data.file_mounts || undefined,
         github_repo_url: data.github_repo_url || undefined,
-        github_directory: data.github_directory || undefined,
-        github_branch: data.github_branch || undefined,
+        github_repo_dir: data.github_repo_dir || undefined,
+        github_repo_branch: data.github_repo_branch || undefined,
         run_sweeps: data.run_sweeps || undefined,
         sweep_config: data.sweep_config || undefined,
         sweep_metric:
@@ -616,8 +710,8 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         templatePayload.subtype = subtype;
       }
 
-      const response = await chatAPI.authenticatedFetch(
-        chatAPI.Endpoints.Task.NewTemplate(experimentInfo?.id || ''),
+      const response = await fetchWithAuth(
+        chatAPI.Endpoints.Task.CreateTemplate(experimentInfo?.id || ''),
         {
           method: 'POST',
           headers: {
@@ -675,15 +769,14 @@ export default function Tasks({ subtype }: { subtype?: string }) {
 
     setIsSubmitting(true);
     try {
-      const interactiveType = data.interactive_type || 'vscode';
-
-      // Fetch interactive gallery to get setup and command templates
+      // Fetch interactive gallery to get setup and run templates
       let defaultSetup: string;
-      let defaultCommand: string;
+      let defaultRun: string;
       let templateId: string | undefined;
+      let template: any;
 
       try {
-        const galleryResponse = await chatAPI.authenticatedFetch(
+        const galleryResponse = await fetchWithAuth(
           chatAPI.Endpoints.Task.InteractiveGallery(experimentInfo.id),
           {
             method: 'GET',
@@ -692,18 +785,24 @@ export default function Tasks({ subtype }: { subtype?: string }) {
 
         if (galleryResponse.ok) {
           const galleryData = await galleryResponse.json();
-          const template = galleryData.data?.find(
-            (t: any) => t.interactive_type === interactiveType,
-          );
+          template = galleryData.data?.find((t: any) => {
+            if (data.template_id) {
+              return t.id === data.template_id;
+            }
+            return (
+              data.interactive_type &&
+              t.interactive_type === data.interactive_type
+            );
+          });
 
           if (!template) {
             throw new Error(
-              `Template not found for interactive type: ${interactiveType}`,
+              `Template not found for: ${data.template_id || data.interactive_type || 'unknown'}`,
             );
           }
 
           defaultSetup = template.setup || '';
-          defaultCommand = template.command || '';
+          defaultRun = template.run || template.command || '';
           templateId = template.id;
         } else {
           throw new Error('Failed to fetch interactive gallery');
@@ -712,79 +811,79 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         throw error;
       }
 
-      // Create template with flat structure
-      const envVars: Record<string, string> = {};
+      let response: Response;
 
-      // Add vLLM-specific environment variables
-      if (interactiveType === 'vllm') {
-        if (data.model_name) {
-          envVars['MODEL_NAME'] = data.model_name;
-        }
-        if (data.hf_token) {
-          envVars['HF_TOKEN'] = data.hf_token;
-        }
-        if (data.tp_size) {
-          envVars['TP_SIZE'] = data.tp_size;
-        }
-      }
-
-      // Add Ollama-specific environment variables
-      if (interactiveType === 'ollama') {
-        if (data.model_name) {
-          envVars['MODEL_NAME'] = data.model_name;
-        }
-      }
-
-      // Add SSH-specific environment variables
-      if (interactiveType === 'ssh') {
-        if (data.ngrok_auth_token) {
-          envVars['NGROK_AUTH_TOKEN'] = data.ngrok_auth_token;
-        }
-      }
-
-      const templatePayload: any = {
-        name: data.title,
-        type: 'REMOTE',
-        plugin: 'remote_orchestrator',
-        experiment_id: experimentInfo.id,
-        cluster_name: data.title,
-        command: defaultCommand,
-        cpus: data.cpus || undefined,
-        memory: data.memory || undefined,
-        accelerators: data.accelerators || undefined,
-        setup: defaultSetup,
-        subtype: 'interactive',
-        interactive_type: interactiveType,
-        interactive_gallery_id: templateId,
-        provider_id: providerMeta.id,
-        provider_name: providerMeta.name,
-        env_vars: Object.keys(envVars).length > 0 ? envVars : undefined,
-      };
-
-      const response = await chatAPI.authenticatedFetch(
-        chatAPI.Endpoints.Task.NewTemplate(experimentInfo?.id || ''),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      if (template.local_task_dir || template.github_repo_url) {
+        // Use the gallery import API which reads task.yaml and copies files,
+        // just like the "Upload from Local Directory" or GitHub import flow.
+        response = await fetchWithAuth(
+          chatAPI.Endpoints.Task.ImportFromGallery(experimentInfo.id),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gallery_id: templateId,
+              experiment_id: experimentInfo.id,
+              is_interactive: true,
+              env_vars: data.env_parameters || undefined,
+            }),
           },
-          body: JSON.stringify(templatePayload),
-        },
-      );
+        );
+      } else {
+        // Create template with flat structure
+        // Use env_parameters from the gallery-defined structure (including NGROK)
+        const envVars: Record<string, string> = data.env_parameters || {};
+
+        // Check if the template defines NGROK_AUTH_TOKEN in its env_parameters
+        const needsNgrok = template?.env_parameters?.some(
+          (p: any) => p.env_var === 'NGROK_AUTH_TOKEN',
+        );
+        if (
+          needsNgrok &&
+          providerMeta.type !== 'local' &&
+          !envVars.NGROK_AUTH_TOKEN
+        ) {
+          envVars.NGROK_AUTH_TOKEN = '{{secret._NGROK_AUTH_TOKEN}}';
+        }
+
+        const templatePayload: any = {
+          name: data.title,
+          type: 'REMOTE',
+          plugin: 'remote_orchestrator',
+          experiment_id: experimentInfo.id,
+          cluster_name: data.title,
+          run: defaultRun,
+          cpus: data.cpus || undefined,
+          memory: data.memory || undefined,
+          accelerators: data.accelerators || undefined,
+          setup: defaultSetup,
+          subtype: 'interactive',
+          interactive_type: template?.interactive_type || undefined,
+          interactive_gallery_id: templateId,
+          provider_id: providerMeta.id,
+          provider_name: providerMeta.name,
+          env_vars: Object.keys(envVars).length > 0 ? envVars : undefined,
+          github_repo_url: template?.github_repo_url || undefined,
+          github_repo_dir: template?.github_repo_dir || undefined,
+        };
+
+        response = await fetchWithAuth(
+          chatAPI.Endpoints.Task.CreateTemplate(experimentInfo?.id || ''),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(templatePayload),
+          },
+        );
+      }
 
       if (response.ok) {
         setInteractiveModalOpen(false);
         await templatesMutate();
         const interactiveTypeLabel =
-          (data.interactive_type || 'vscode') === 'jupyter'
-            ? 'Jupyter'
-            : (data.interactive_type || 'vscode') === 'vllm'
-              ? 'vLLM'
-              : (data.interactive_type || 'vscode') === 'ollama'
-                ? 'Ollama'
-                : (data.interactive_type || 'vscode') === 'ssh'
-                  ? 'SSH'
-                  : 'VS Code';
+          template?.name || data.interactive_type || 'interactive';
         addNotification({
           type: 'success',
           message: `Interactive template created. Use Queue to launch the ${interactiveTypeLabel} tunnel.`,
@@ -813,11 +912,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     // For templates, all fields are stored directly (not nested in config)
     // For backward compatibility, check if it's an old task format with nested config
     const cfg =
-      task.config !== undefined
-        ? typeof task.config === 'string'
-          ? JSON.parse(task.config)
-          : task.config
-        : task; // If no config field, assume it's a template with flat structure
+      task.config !== undefined ? SafeJSONParse(task.config, task) : task; // If no config field, assume it's a template with flat structure
 
     if (!providers.length) {
       addNotification({
@@ -828,10 +923,15 @@ export default function Tasks({ subtype }: { subtype?: string }) {
       return;
     }
 
-    if (!cfg.command && !task.command) {
+    if (
+      !cfg.run &&
+      !task.run &&
+      !cfg.github_repo_url &&
+      !task.github_repo_url
+    ) {
       addNotification({
         type: 'warning',
-        message: 'Task is missing a command to run.',
+        message: 'Task is missing a run command.',
       });
       return;
     }
@@ -852,11 +952,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     // For templates, all fields are stored directly (not nested in config)
     // For backward compatibility, check if it's an old task format with nested config
     const cfg =
-      task.config !== undefined
-        ? typeof task.config === 'string'
-          ? JSON.parse(task.config)
-          : task.config
-        : task; // If no config field, assume it's a template with flat structure
+      task.config !== undefined ? SafeJSONParse(task.config, task) : task; // If no config field, assume it's a template with flat structure
 
     // Use provider from modal override first, then task/cfg
     const providerId =
@@ -889,6 +985,15 @@ export default function Tasks({ subtype }: { subtype?: string }) {
       const {
         provider_id: _pid,
         provider_name: _pname,
+        enable_trackio,
+        enable_profiling,
+        enable_profiling_torch,
+        cpus,
+        memory,
+        disk_space,
+        accelerators,
+        num_nodes,
+        minutes_requested,
         ...paramConfig
       } = config ?? {};
 
@@ -899,7 +1004,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         task_id: task.id,
         task_name: task.name,
         cluster_name: cfg.cluster_name || task.cluster_name,
-        command: cfg.command || task.command,
+        run: cfg.run || task.run,
         subtype: cfg.subtype || task.subtype,
         interactive_type: cfg.interactive_type || task.interactive_type,
         interactive_gallery_id:
@@ -907,11 +1012,11 @@ export default function Tasks({ subtype }: { subtype?: string }) {
           (task as any)?.interactive_gallery_id ??
           config?.interactive_gallery_id ??
           undefined,
-        cpus: cfg.cpus || task.cpus,
-        memory: cfg.memory || task.memory,
-        disk_space: cfg.disk_space || task.disk_space,
-        accelerators: cfg.accelerators || task.accelerators,
-        num_nodes: cfg.num_nodes || task.num_nodes,
+        cpus: cpus ?? cfg.cpus ?? task.cpus,
+        memory: memory ?? cfg.memory ?? task.memory,
+        disk_space: disk_space ?? cfg.disk_space ?? task.disk_space,
+        accelerators: accelerators ?? cfg.accelerators ?? task.accelerators,
+        num_nodes: num_nodes ?? cfg.num_nodes ?? task.num_nodes,
         setup: cfg.setup || task.setup,
         env_vars: cfg.env_vars || task.env_vars || {},
         parameters: cfg.parameters || task.parameters || undefined, // Keep original parameter definitions
@@ -919,8 +1024,8 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         file_mounts: cfg.file_mounts || task.file_mounts,
         provider_name: config?.provider_name ?? providerMeta.name,
         github_repo_url: cfg.github_repo_url || task.github_repo_url,
-        github_directory: cfg.github_directory || task.github_directory,
-        github_branch: cfg.github_branch || task.github_branch,
+        github_repo_dir: cfg.github_repo_dir || task.github_repo_dir,
+        github_repo_branch: cfg.github_repo_branch || task.github_repo_branch,
         run_sweeps: cfg.run_sweeps || task.run_sweeps || undefined,
         sweep_config: cfg.sweep_config || task.sweep_config || undefined,
         sweep_metric:
@@ -934,7 +1039,22 @@ export default function Tasks({ subtype }: { subtype?: string }) {
               ? task.lower_is_better
               : undefined,
         minutes_requested:
-          cfg.minutes_requested || task.minutes_requested || undefined,
+          minutes_requested ??
+          cfg.minutes_requested ??
+          task.minutes_requested ??
+          undefined,
+        enable_trackio:
+          typeof enable_trackio === 'boolean' ? enable_trackio : undefined,
+        enable_profiling:
+          typeof enable_profiling === 'boolean' ? enable_profiling : undefined,
+        enable_profiling_torch:
+          typeof enable_profiling_torch === 'boolean'
+            ? enable_profiling_torch
+            : undefined,
+        trackio_project_name:
+          config?.trackio_project_name != null
+            ? config.trackio_project_name
+            : undefined,
       };
 
       const response = await fetchWithAuth(
@@ -1003,7 +1123,10 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         ? SafeJSONParse(task.config, {})
         : (task?.config ?? {});
     const isInteractive =
-      (task as any)?.interactive_type || config?.interactive_type;
+      (task as any)?.subtype === 'interactive' ||
+      config?.subtype === 'interactive' ||
+      (task as any)?.interactive_type ||
+      config?.interactive_type;
     if (isInteractive) {
       setTaskBeingEdited(task);
       setEditModalOpen(true);
@@ -1044,11 +1167,18 @@ export default function Tasks({ subtype }: { subtype?: string }) {
       {isInteractivePage && (
         <NewInteractiveTaskModal
           open={interactiveModalOpen}
-          onClose={() => setInteractiveModalOpen(false)}
+          onClose={() => {
+            setInteractiveModalOpen(false);
+            setIsSubmitting(false);
+          }}
           onSubmit={handleSubmitInteractive}
           isSubmitting={isSubmitting}
           providers={providers}
           isProvidersLoading={providersIsLoading}
+          importedTasks={tasks}
+          onDeleteTask={handleDeleteTask}
+          onQueueTask={handleQueue}
+          onRefreshTasks={templatesMutate}
         />
       )}
       {taskBeingEdited &&
@@ -1071,7 +1201,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
               }
 
               try {
-                const response = await chatAPI.authenticatedFetch(
+                const response = await fetchWithAuth(
                   chatAPI.Endpoints.Task.UpdateTemplate(
                     experimentInfo.id,
                     taskBeingEdited.id,
@@ -1114,12 +1244,14 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         <QueueTaskModal
           open={queueModalOpen}
           onClose={() => {
+            setIsSubmitting(false);
             setQueueModalOpen(false);
             setTaskBeingQueued(null);
           }}
           task={taskBeingQueued}
           onSubmit={handleQueueSubmit}
           isSubmitting={isSubmitting}
+          experimentId={experimentInfo?.id ?? ''}
         />
       )}
       <Stack
@@ -1148,140 +1280,198 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         }}
       >
         <TaskTemplateList
-          tasksList={tasks}
+          tasksList={visibleTasks}
           onDeleteTask={handleDeleteTask}
           onQueueTask={handleQueue}
           onEditTask={handleEditTask}
           onExportTask={handleExportToTeamGallery}
+          // TODO: potentially deprecated — file browsing is now integrated into the Edit Task modal.
+          // Remove onViewFilesTask and related FileBrowserModal state once confirmed unnecessary.
+          // onViewFilesTask={(taskRow) =>
+          //   setViewTaskFilesFromTask({
+          //     id: taskRow.id,
+          //     name: (taskRow as any).name ?? (taskRow as any).title ?? null,
+          //   })
+          // }
           loading={templatesIsLoading}
         />
       </Sheet>
-      <Typography level="title-md">Runs</Typography>
-      <Sheet sx={{ px: 1, mt: 1, mb: 2, flex: 2, overflow: 'auto' }}>
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="center"
+        gap={2}
+        sx={{ mt: 1 }}
+      >
+        <Typography level="title-md">Jobs</Typography>
+        <Stack direction="row" gap={1}>
+          <Button
+            size="sm"
+            variant={isCompareSelectMode ? 'solid' : 'outlined'}
+            onClick={() => {
+              setIsCompareSelectMode((prev) => {
+                const next = !prev;
+                if (!next) {
+                  setCompareEvalJobIds([]);
+                  setCompareEvalModalOpen(false);
+                }
+                return next;
+              });
+            }}
+          >
+            {isCompareSelectMode ? 'Cancel' : 'Select'}
+          </Button>
+          {isCompareSelectMode && (
+            <Button
+              size="sm"
+              variant="solid"
+              disabled={compareEvalJobIds.length !== 2}
+              onClick={() => {
+                if (compareEvalJobIds.length === 2) {
+                  setCompareEvalModalOpen(true);
+                }
+              }}
+            >
+              Compare selected evals
+            </Button>
+          )}
+          <IconButton
+            size="sm"
+            variant={showFavoritesOnly ? 'solid' : 'outlined'}
+            color={showFavoritesOnly ? 'warning' : 'neutral'}
+            onClick={() => setShowFavoritesOnly((prev) => !prev)}
+            title={showFavoritesOnly ? 'Show all jobs' : 'Show favorites only'}
+          >
+            <BookmarkIcon
+              size={16}
+              fill={showFavoritesOnly ? 'currentColor' : 'none'}
+            />
+          </IconButton>
+          {hiddenJobCount > 0 && (
+            <Button
+              size="sm"
+              variant={showHidden ? 'solid' : 'outlined'}
+              onClick={() => setShowHidden((prev) => !prev)}
+            >
+              {showHidden ? 'Hide hidden' : `Show hidden (${hiddenJobCount})`}
+            </Button>
+          )}
+        </Stack>
+      </Stack>
+      <Sheet sx={{ px: 1, mt: 1, mb: 1, flex: 2, overflow: 'auto' }}>
         <JobsList
-          jobs={jobsWithPlaceholders as any}
+          jobs={filteredJobsForDisplay as any}
+          launchProgressByJobId={launchProgressByJobId}
           onDeleteJob={handleDeleteJob}
-          onViewOutput={(jobId) => setViewOutputFromJob(parseInt(jobId))}
-          onViewTensorboard={(jobId) =>
-            setCurrentTensorboardForModal(parseInt(jobId))
-          }
+          onViewOutput={(jobId) => {
+            const jobIdStr =
+              jobId === null || jobId === undefined ? '' : String(jobId);
+            if (!jobIdStr || jobIdStr === '-1' || jobIdStr === 'NaN') return;
+            setViewOutputFromJob(jobIdStr);
+          }}
           onViewCheckpoints={(jobId) =>
-            setViewCheckpointsFromJob(parseInt(jobId))
+            setViewCheckpointsFromJob(jobId && jobId !== 'NaN' ? jobId : null)
           }
-          onViewArtifacts={(jobId) => setViewArtifactsFromJob(parseInt(jobId))}
+          onViewAllArtifacts={(jobId) =>
+            setViewAllArtifactsFromJob(jobId && jobId !== 'NaN' ? jobId : null)
+          }
           onViewEvalImages={(jobId) =>
-            setViewEvalImagesFromJob(parseInt(jobId))
+            setViewEvalImagesFromJob(jobId && jobId !== 'NaN' ? jobId : null)
           }
           onViewEvalResults={(jobId) =>
-            setViewEvalResultsFromJob(parseInt(jobId))
+            setViewEvalResultsFromJob(jobId && jobId !== 'NaN' ? jobId : null)
           }
           onViewGeneratedDataset={(jobId, datasetId) => {
             setPreviewDatasetModal({ open: true, datasetId });
           }}
-          onViewJobDatasets={(jobId) =>
-            setViewJobDatasetsFromJob(parseInt(jobId))
-          }
-          onViewJobModels={(jobId) => setViewJobModelsFromJob(parseInt(jobId))}
+          onViewFileBrowser={(jobId) => {
+            if (jobId == null || jobId === '') return;
+            setViewFileBrowserFromJob(String(jobId));
+          }}
           onViewSweepOutput={(jobId) => {
             setViewOutputFromSweepJob(true);
-            setViewOutputFromJob(parseInt(jobId));
+            const jobIdStr =
+              jobId === null || jobId === undefined ? '' : String(jobId);
+            if (!jobIdStr || jobIdStr === '-1' || jobIdStr === 'NaN') return;
+            setViewOutputFromJob(jobIdStr);
           }}
           onViewSweepResults={(jobId) => {
-            setViewSweepResultsFromJob(parseInt(jobId));
+            setViewSweepResultsFromJob(jobId && jobId !== 'NaN' ? jobId : null);
           }}
           onViewInteractive={(jobId) =>
-            setInteractiveJobForModal(parseInt(jobId))
+            setInteractiveJobForModal(jobId && jobId !== 'NaN' ? jobId : null)
+          }
+          onViewTrackio={(jobId) =>
+            setTrackioJobIdForModal(jobId && jobId !== 'NaN' ? jobId : null)
           }
           loading={jobsIsLoading}
+          selectMode={isCompareSelectMode}
+          selectedJobIds={compareEvalJobIds.map((id) => String(id))}
+          onToggleJobSelected={(jobId) => {
+            setCompareEvalJobIds((prev) => {
+              const id = jobId;
+              if (!id || id === 'NaN') return prev;
+              if (prev.includes(id)) {
+                return prev.filter((existing) => existing !== id);
+              }
+              if (prev.length === 0) return [id];
+              if (prev.length === 1) return [...prev, id];
+              // If already two selected, replace the oldest with the new one
+              return [prev[1], id];
+            });
+          }}
+          onToggleFavorite={handleToggleFavorite}
+          onToggleHidden={handleToggleHidden}
         />
       </Sheet>
       <ViewSweepResultsModal
         jobId={viewSweepResultsFromJob}
-        setJobId={(jobId: number) => setViewSweepResultsFromJob(jobId)}
-      />
-      <ViewOutputModalStreaming
-        jobId={viewOutputFromJob}
-        setJobId={(jobId: number) => setViewOutputFromJob(jobId)}
-      />
-      <ViewArtifactsModal
-        open={viewArtifactsFromJob !== -1}
-        onClose={() => setViewArtifactsFromJob(-1)}
-        jobId={viewArtifactsFromJob}
-      />
-      <ViewCheckpointsModal
-        open={viewCheckpointsFromJob !== -1}
-        onClose={() => setViewCheckpointsFromJob(-1)}
-        jobId={viewCheckpointsFromJob}
-      />
-      <ViewEvalResultsModal
-        open={viewEvalResultsFromJob !== -1}
-        onClose={() => setViewEvalResultsFromJob(-1)}
-        jobId={viewEvalResultsFromJob}
+        setJobId={(jobId: string | null) => setViewSweepResultsFromJob(jobId)}
       />
       {(() => {
-        // Find the job to determine which modal to show
-        const job = jobs.find(
-          (j: any) => String(j.id) === String(interactiveJobForModal),
+        const outputJob = jobs?.find(
+          (j: any) => String(j.id) === viewOutputFromJob,
         );
-        const interactiveType =
-          job?.job_data?.interactive_type ||
-          (typeof job?.job_data === 'string'
-            ? JSON.parse(job?.job_data || '{}')?.interactive_type
-            : null) ||
-          'vscode';
-
-        if (interactiveType === 'jupyter') {
-          return (
-            <InteractiveJupyterModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-              onOpenOutput={handleOpenOutputFromInteractive}
-            />
-          );
-        }
-
-        if (interactiveType === 'vllm') {
-          return (
-            <InteractiveVllmModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-              onOpenOutput={handleOpenOutputFromInteractive}
-            />
-          );
-        }
-
-        if (interactiveType === 'ssh') {
-          console.log(
-            '[Tasks] Rendering InteractiveSshModal with onOpenOutput:',
-            handleOpenOutputFromInteractive,
-          );
-          return (
-            <InteractiveSshModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-              onOpenOutput={handleOpenOutputFromInteractive}
-            />
-          );
-        }
-
-        if (interactiveType === 'ollama') {
-          return (
-            <InteractiveOllamaModal
-              jobId={interactiveJobForModal}
-              setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-              onOpenOutput={handleOpenOutputFromInteractive}
-            />
-          );
-        }
-
         return (
-          <InteractiveVSCodeModal
-            jobId={interactiveJobForModal}
-            setJobId={(jobId: number) => setInteractiveJobForModal(jobId)}
-            onOpenOutput={handleOpenOutputFromInteractive}
+          <ViewOutputModalStreaming
+            jobId={viewOutputFromJob}
+            setJobId={(jobId: string | null) => setViewOutputFromJob(jobId)}
+            jobStatus={outputJob?.status || ''}
+            tabs={
+              outputJob?.job_data?.provider_type === 'skypilot'
+                ? ['output', 'provider', 'skypilot']
+                : ['output', 'provider']
+            }
+            skypilotRequestId={
+              outputJob?.job_data?.provider_launch_result?.request_id || ''
+            }
           />
         );
       })()}
+      <JobArtifactsModal
+        open={viewAllArtifactsFromJob !== null}
+        onClose={() => setViewAllArtifactsFromJob(null)}
+        jobId={viewAllArtifactsFromJob}
+      />
+      <ViewCheckpointsModal
+        open={viewCheckpointsFromJob !== null}
+        onClose={() => setViewCheckpointsFromJob(null)}
+        jobId={viewCheckpointsFromJob}
+      />
+      <ViewEvalResultsModal
+        open={viewEvalResultsFromJob !== null}
+        onClose={() => setViewEvalResultsFromJob(null)}
+        jobId={viewEvalResultsFromJob}
+      />
+      <CompareEvalResultsModal
+        open={compareEvalModalOpen && compareEvalJobIds.length === 2}
+        onClose={() => setCompareEvalModalOpen(false)}
+        jobIds={compareEvalJobIds}
+      />
+      <InteractiveModal
+        jobId={interactiveJobForModal}
+        setJobId={(jobId: string | null) => setInteractiveJobForModal(jobId)}
+      />
       <PreviewDatasetModal
         open={previewDatasetModal.open}
         setOpen={(open: boolean) =>
@@ -1290,15 +1480,30 @@ export default function Tasks({ subtype }: { subtype?: string }) {
         dataset_id={previewDatasetModal.datasetId}
         viewType="preview"
       />
-      <ViewJobDatasetsModal
-        open={viewJobDatasetsFromJob !== -1}
-        onClose={() => setViewJobDatasetsFromJob(-1)}
-        jobId={viewJobDatasetsFromJob}
+      <FileBrowserModal
+        mode="job"
+        open={viewFileBrowserFromJob !== null}
+        onClose={() => setViewFileBrowserFromJob(null)}
+        jobId={viewFileBrowserFromJob ?? ''}
       />
-      <ViewJobModelsModal
-        open={viewJobModelsFromJob !== -1}
-        onClose={() => setViewJobModelsFromJob(-1)}
-        jobId={viewJobModelsFromJob}
+      <FileBrowserModal
+        mode="task"
+        open={viewTaskFilesFromTask.id !== null}
+        onClose={() => setViewTaskFilesFromTask({ id: null, name: null })}
+        taskId={viewTaskFilesFromTask.id ?? ''}
+        taskName={viewTaskFilesFromTask.name}
+      />
+      <TrackioModal
+        jobId={trackioJobIdForModal}
+        experimentId={experimentInfo?.id ?? null}
+        onClose={() => setTrackioJobIdForModal(null)}
+      />
+      <DeleteTaskConfirmModal
+        open={taskToDelete !== null}
+        onClose={() => setTaskToDelete(null)}
+        taskId={taskToDelete?.id ?? null}
+        taskName={taskToDelete?.name ?? null}
+        onConfirm={handleConfirmDeleteTask}
       />
     </Sheet>
   );

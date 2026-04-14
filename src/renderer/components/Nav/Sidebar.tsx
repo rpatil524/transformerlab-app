@@ -36,6 +36,9 @@ interface ExperimentMenuItemsProps {
 
 function ExperimentMenuItems({ experimentInfo }: ExperimentMenuItemsProps) {
   const experimentReady = Boolean(experimentInfo?.name);
+  const basePath = experimentReady
+    ? `/experiment/${encodeURIComponent(experimentInfo.name)}`
+    : '#';
 
   return (
     <List
@@ -48,26 +51,30 @@ function ExperimentMenuItems({ experimentInfo }: ExperimentMenuItemsProps) {
     >
       <>
         <SubNavItem
-          title="Interact"
-          path="/experiment/interactive"
-          icon={<CodeIcon strokeWidth={1} />}
-          disabled={!experimentReady}
-        />
-        <SubNavItem
           title="Tasks"
-          path="/experiment/tasks"
+          path={`${basePath}/tasks`}
+          matchPattern="/experiment/:experimentName/tasks"
           icon={<StretchHorizontalIcon />}
           disabled={!experimentReady}
         />
         <SubNavItem
+          title="Interact"
+          path={`${basePath}/interactive`}
+          matchPattern="/experiment/:experimentName/interactive"
+          icon={<CodeIcon strokeWidth={1} />}
+          disabled={!experimentReady}
+        />
+        <SubNavItem
           title="Documents"
-          path="/experiment/documents"
+          path={`${basePath}/documents`}
+          matchPattern="/experiment/:experimentName/documents"
           icon={<FileIcon />}
           disabled={!experimentReady}
         />
         <SubNavItem
           title="Notes"
-          path="/experiment/notes"
+          path={`${basePath}/notes`}
+          matchPattern="/experiment/:experimentName/notes"
           icon={<FlaskConicalIcon />}
           disabled={!experimentReady}
         />
@@ -81,7 +88,6 @@ interface GlobalMenuItemsProps {
 }
 
 function GlobalMenuItems({ experimentInfo }: GlobalMenuItemsProps) {
-  const isLocalMode = window?.platform?.multiuser !== true;
   return (
     <List
       sx={{
@@ -95,16 +101,12 @@ function GlobalMenuItems({ experimentInfo }: GlobalMenuItemsProps) {
 
       <SubNavItem title="Model Registry" path="/zoo" icon={<BoxesIcon />} />
       <SubNavItem title="Datasets" path="/data" icon={<FileTextIcon />} />
-      {!isLocalMode && (
-        <SubNavItem
-          title="Tasks Gallery"
-          path="/tasks-gallery"
-          icon={<StretchHorizontalIcon />}
-        />
-      )}
-      {!isLocalMode && (
-        <SubNavItem title="Compute" path="/compute" icon={<MonitorIcon />} />
-      )}
+      <SubNavItem
+        title="Tasks Gallery"
+        path="/tasks-gallery"
+        icon={<StretchHorizontalIcon />}
+      />
+      <SubNavItem title="Compute" path="/compute" icon={<MonitorIcon />} />
     </List>
   );
 }
@@ -148,8 +150,8 @@ function BottomMenuItems({ navigate, themeSetter }: BottomMenuItemsProps) {
             </IconButton>
           </Tooltip>
         </a>
-        <Tooltip title="Settings">
-          <IconButton variant="plain" onClick={() => navigate('/settings')}>
+        <Tooltip title="User Settings">
+          <IconButton variant="plain" onClick={() => navigate('/user')}>
             <SettingsIcon strokeWidth={1} />
           </IconButton>
         </Tooltip>
@@ -207,9 +209,7 @@ export default function Sidebar({
       <SelectExperimentMenu models={models} />
       <ExperimentMenuItems experimentInfo={experimentInfo} />
       <GlobalMenuItems experimentInfo={experimentInfo} />
-      {window?.platform?.multiuser === true && (
-        <LoginChip notificationsSummary={notificationsSummary} />
-      )}
+      <LoginChip notificationsSummary={notificationsSummary} />
       <BottomMenuItems navigate={navigate} themeSetter={themeSetter} />
     </Sheet>
   );

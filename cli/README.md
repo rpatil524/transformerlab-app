@@ -1,16 +1,16 @@
 # Transformer Lab CLI
 
-![Main Screenshot](./screenshots/screenshot001.png)
+![Main Screenshot](https://raw.githubusercontent.com/transformerlab/transformerlab-app/main/cli/screenshots/screenshot001.png)
 
-![Job Monitor Screenshot](./screenshots/screenshot002.png)
-
-# Usage
+![Job Monitor Screenshot](https://raw.githubusercontent.com/transformerlab/transformerlab-app/main/cli/screenshots/screenshot002.png)
 
 ## Install
 
-(install instructions coming soon, for now follow Build Locally instructions below)
+```bash
+uv tool install transformerlab-cli
+```
 
-## Usage:
+## Usage
 
 ```
  Usage: lab [OPTIONS] COMMAND [ARGS]...
@@ -34,44 +34,55 @@
 
 ## Command Reference
 
-For a full list of all commands with detailed options and example usage, see [COMMANDS.md](COMMANDS.md).
+For a full list of all commands with detailed options and example usage, see [COMMANDS.md](https://github.com/transformerlab/transformerlab-app/blob/main/cli/COMMANDS.md).
 
-# Development
+## Claude Code Skill
 
-## Run (DEV):
+Want Claude Code (or other AI coding agents) to manage Transformer Lab for you? Install the skill:
 
+```bash
+npx skills add transformerlab/transformerlab-app --skill transformerlab-cli
 ```
+
+This teaches your AI agent how to use the `lab` CLI to check job status, stream logs, download artifacts, queue tasks, manage providers, and more. See [.agents/skills/transformerlab-cli/](https://github.com/transformerlab/transformerlab-app/tree/main/.agents/skills/transformerlab-cli) for the full skill definition.
+
+## Development
+
+### Run (DEV)
+
+```bash
 uv run src/transformerlab_cli/main.py
 ```
 
-## Build Locally:
-```
+### Build Locally
+
+```bash
 uv tool install .
 ```
 
 or rebuild with:
-```
+
+```bash
 uv tool install . --force --reinstall
 ```
 
-Adds a `lab` command to your terminal
+Adds a `lab` command to your terminal.
 
-## Debug the Job Monitor:
+### Debug the Job Monitor
 
-```
+```bash
 pip install -e .
 uv run textual run --dev src/transformerlab_cli/commands/job_monitor/job_monitor.py
 ```
 
-and then in another window do:
+and then in another window:
 
-```
+```bash
 textual console -x SYSTEM -x EVENT -x INFO
 ```
 
-## Run Textual in Browser
+### Run Textual in Browser
 
-Run in browser (for fun?)
-```
+```bash
 uv run textual serve src/transformerlab_cli/commands/job_monitor/job_monitor.py
 ```

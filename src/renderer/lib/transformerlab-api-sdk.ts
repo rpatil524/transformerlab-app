@@ -6,39 +6,8 @@
 export * from './api-client/endpoints';
 
 export {
-  stopStreamingResponse,
-  sendAndReceive,
-  sendAndReceiveStreaming,
-  sendCompletion,
-  sendCompletionReactWay,
-  sendBatchedCompletion,
-  sendBatchedChat,
-  sendBatchedAudio,
-  callTool,
-  getToolsForCompletions,
-  getEmbeddings,
-  tokenize,
-  generateLogProbs,
-  countTokens,
-  countChatTokens,
-} from './api-client/chat';
-
-export {
-  downloadModelFromHuggingFace,
-  downloadGGUFFile,
-  downloadModelFromGallery,
-  activeModels,
-  apiHealthz,
-  controllerHealthz,
-  localaiHealthz,
-  getComputerInfo,
-  activateWorker,
-  killWorker,
   GET_EXPERIMENT_UPDATE_CONFIG_URL,
   EXPERIMENT_ADD_EVALUATION,
-  EXPERIMENT_EDIT_EVALUATION,
-  EXPERIMENT_ADD_GENERATION,
-  EXPERIMENT_EDIT_GENERATION,
   TEMPLATE_FOR_MODEL_URL,
   getTemplateForModel,
   authenticatedFetch,
@@ -46,10 +15,7 @@ export {
 
 export {
   useModelStatus,
-  usePluginStatus,
-  useServerStats,
   useConnectionHealth,
-  useCheckLocalConnection,
   fetcher,
 } from './api-client/hooks';
 

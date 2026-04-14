@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 
+from lab.job_status import JobStatus
 from transformerlab.shared.models.models import (
     TeamQuota,
     UserQuotaOverride,
@@ -277,7 +278,7 @@ async def record_quota_usage(
 
 
 async def ensure_quota_recorded_for_completed_job(
-    session: AsyncSession, job_id: str, team_id: Optional[str] = None
+    session: AsyncSession, job_id: str, experiment_id: Optional[str] = None, team_id: Optional[str] = None
 ) -> bool:
     """
     Check if a completed REMOTE job has quota usage recorded.
@@ -290,7 +291,11 @@ async def ensure_quota_recorded_for_completed_job(
     from sqlalchemy import select
 
     # Get the job
-    job = await job_service.job_get(job_id)
+    if not experiment_id:
+        # Jobs are now experiment-scoped; caller must provide experiment context.
+        return False
+
+    job = await job_service.job_get(job_id, experiment_id=experiment_id)
     if not job:
         return False
 
@@ -300,7 +305,7 @@ async def ensure_quota_recorded_for_completed_job(
 
     # Only process jobs in terminal states
     status = job.get("status", "")
-    if status not in ("COMPLETE", "STOPPED", "FAILED", "DELETED"):
+    if status not in (JobStatus.COMPLETE, JobStatus.STOPPED, JobStatus.FAILED, JobStatus.DELETED):
         return False
 
     # Check if quota usage already recorded for this job
@@ -340,7 +345,7 @@ async def ensure_quota_recorded_for_completed_job(
     end_time_str = job_data.get("end_time")
     if not end_time_str:
         # Try to calculate from current time if job is complete
-        if status == "COMPLETE":
+        if status == JobStatus.COMPLETE:
             from datetime import datetime
 
             end_time_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")

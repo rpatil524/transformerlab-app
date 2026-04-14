@@ -12,7 +12,6 @@ import { FcGoogle, FaGithub } from 'renderer/components/Icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/authContext';
 import { useNotification } from '../Shared/NotificationSystem';
-import { API_URL } from '../../lib/api-client/urls';
 
 export default function LoginForm() {
   const [email, setEmail] = useState('');
@@ -26,42 +25,11 @@ export default function LoginForm() {
   const [oidcProviders, setOidcProviders] = useState<
     Array<{ id: string; name: string }>
   >([]);
+  const [emailMethod, setEmailMethod] = useState('smtp');
 
-  const { login } = useAuth();
+  const { login, setIsDefaultPassword } = useAuth();
   const { addNotification } = useNotification();
   const navigate = useNavigate();
-
-  // Auto-login for single user mode
-  useEffect(() => {
-    const autoLogin = async () => {
-      // Only attempt auto-login if we have a valid API URL (connection is established)
-      const apiUrl = API_URL();
-      if (!apiUrl) {
-        console.log('Skipping auto-login: no API URL available.');
-        return;
-      }
-
-      // Only auto-login if MULTIUSER is not enabled
-      // Check window.platform first (cloud mode), then fallback to process.env
-      const isMultiUserMode =
-        (window as any).platform?.multiuser === true ||
-        (typeof process !== 'undefined' &&
-          process.env &&
-          process.env.MULTIUSER === 'true');
-      if (isMultiUserMode) {
-        return;
-      }
-
-      try {
-        console.log('Attempting auto-login for single user mode');
-        await login('admin@example.com', 'admin123');
-      } catch (error) {
-        console.error('Auto-login failed:', error);
-      }
-    };
-
-    autoLogin();
-  }, [login]);
 
   // Check OAuth status on component mount
   useEffect(() => {
@@ -100,6 +68,16 @@ export default function LoginForm() {
         }
       } catch (err) {
         console.warn('Failed to check OIDC providers:', err);
+      }
+
+      try {
+        const response = await fetch(`${apiUrl}healthz`);
+        if (response.ok) {
+          const data = await response.json();
+          setEmailMethod(data.metadata?.email_method ?? 'smtp');
+        }
+      } catch (err) {
+        console.warn('Failed to check email method:', err);
       }
     };
 
@@ -150,7 +128,17 @@ export default function LoginForm() {
       if (result instanceof Error) {
         if (result.info?.detail === 'LOGIN_USER_NOT_VERIFIED') {
           setError(
-            'Email not verified. Please check your email for the verification link.',
+            emailMethod === 'dev'
+              ? 'Email not verified. Check the terminal where you started the server for the verification link.'
+              : 'Email not verified. Please check your email for the verification link.',
+          );
+          return;
+        }
+        // Distinguish network/connection errors from actual login failures.
+        // Server-side errors have .info set; network errors (server unreachable) do not.
+        if (!(result as any).info) {
+          setError(
+            'Unable to connect to the server. Please check that the server is running and try again.',
           );
           return;
         }
@@ -160,15 +148,13 @@ export default function LoginForm() {
         );
       } else {
         if (password === 'admin123') {
-          addNotification({
-            type: 'danger',
-            message:
-              'You are using a default insecure password. Please change it in User Settings.',
-          });
+          setIsDefaultPassword(true);
         }
       }
     } catch (err) {
-      setError('Login failed. Please check your credentials.');
+      setError(
+        'Unable to connect to the server. Please check that the server is running and try again.',
+      );
     } finally {
       setLoadingState(null);
     }
@@ -272,6 +258,7 @@ export default function LoginForm() {
                   autoFocus
                   disabled={loadingState !== null}
                   variant="outlined"
+                  slotProps={{ input: { autoComplete: 'username' } }}
                 />
               </FormControl>
               <FormControl required>
@@ -282,6 +269,7 @@ export default function LoginForm() {
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loadingState !== null}
                   variant="outlined"
+                  slotProps={{ input: { autoComplete: 'current-password' } }}
                 />
               </FormControl>
 

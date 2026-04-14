@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import String, JSON, DateTime, func, Integer, Index, UUID, Date, Float, UniqueConstraint
+from sqlalchemy import String, JSON, DateTime, func, Integer, Index, UUID, Date, Float, UniqueConstraint, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID, SQLAlchemyBaseOAuthAccountTableUUID
 import uuid
@@ -131,6 +131,7 @@ class ProviderType(str, enum.Enum):
     SKYPILOT = "skypilot"
     RUNPOD = "runpod"
     LOCAL = "local"
+    DSTACK = "dstack"
 
 
 class AcceleratorType(str, enum.Enum):
@@ -159,6 +160,7 @@ class TeamComputeProvider(Base):
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
+    disabled: Mapped[bool] = mapped_column(Boolean, server_default="0", nullable=False)
 
     __table_args__ = (Index("idx_compute_provider_name", "team_id", "name"),)
 
@@ -282,4 +284,34 @@ class QuotaHold(Base):
         Index("idx_quota_holds_user_team_status", "user_id", "team_id", "status"),
         Index("idx_quota_holds_task_id", "task_id"),
         Index("idx_quota_holds_job_id", "job_id"),
+    )
+
+
+class JobQueue(Base):
+    """Persistent queue for jobs waiting to be dispatched by a background worker.
+
+    Rows are inserted when a job is enqueued (e.g. via ``enqueue_remote_launch``)
+    and transition from ``PENDING`` → ``DISPATCHED`` once the worker picks them up.
+    The worker queries ``status = 'PENDING'`` ordered by ``created_at`` to drain
+    the queue in FIFO order.
+
+    The DISPATCHED status is terminal for this queue table; we don't track what
+    happens to the job after dispatch. In the future, we may add a CANCELLED status
+    for jobs that should be removed from the queue.
+    """
+
+    __tablename__ = "job_queue"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id: Mapped[str] = mapped_column(String, nullable=False)
+    experiment_id: Mapped[str] = mapped_column(String, nullable=False)
+    team_id: Mapped[str] = mapped_column(String, nullable=False)
+    queue_type: Mapped[str] = mapped_column(String, nullable=False)  # e.g. "REMOTE"
+    status: Mapped[str] = mapped_column(String, nullable=False)  # "PENDING", "DISPATCHED", "FAILED"
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("idx_job_queue_status_type", "status", "queue_type"),
+        Index("idx_job_queue_job_id", "job_id"),
     )

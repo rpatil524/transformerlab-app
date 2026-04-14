@@ -12,9 +12,14 @@ on:
     paths:
       - "api/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: api
@@ -27,22 +32,20 @@ jobs:
       AUTH_LOGOUT_REDIRECT_URL: /
     strategy:
       fail-fast: false
-      matrix:
-        python-version: ["3.11"]
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v3
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
       - name: Install dependencies
         run: |
           pip install uv
           uv pip install --system pytest pytest-asyncio jsonschema requests pytest-cov shellcheck-py
-          # Temporarily remove transformerlab from pyproject.toml to avoid installing unreleased version
+          # Minimal api/pyproject.toml only in CI; drop SDK pin so ../lab-sdk editable install wins
           sed -i.bak '/^  "transformerlab==/d' pyproject.toml
-          uv pip install --system .[cpu] --index=https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+          uv pip install --system .
           mv pyproject.toml.bak pyproject.toml || true
       - name: Install lab-sdk in editable mode
         run: |

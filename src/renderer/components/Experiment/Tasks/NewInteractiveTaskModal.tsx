@@ -7,7 +7,6 @@ import Button from '@mui/joy/Button';
 import FormControl from '@mui/joy/FormControl';
 import FormLabel from '@mui/joy/FormLabel';
 import Input from '@mui/joy/Input';
-import Checkbox from '@mui/joy/Checkbox';
 import {
   ModalClose,
   ModalDialog,
@@ -28,13 +27,18 @@ import {
   Box,
   Chip,
 } from '@mui/joy';
-import { ArrowLeftIcon, ArrowRightIcon } from 'lucide-react';
+import { ArrowLeftIcon, ArrowRightIcon, XIcon } from 'lucide-react';
 import { useExperimentInfo } from 'renderer/lib/ExperimentInfoContext';
 import * as chatAPI from 'renderer/lib/transformerlab-api-sdk';
 import { useSWRWithAuth as useSWR } from 'renderer/lib/authContext';
 import { fetcher } from 'renderer/lib/transformerlab-api-sdk';
 import { useNotification } from 'renderer/components/Shared/NotificationSystem';
 import { generateFriendlyName } from 'renderer/lib/utils';
+import { isProviderCompatibleWithAccelerators } from './providerCompatibility';
+import ModelNameInput, {
+  getModelHistoryKey,
+  saveModelToHistory,
+} from 'renderer/components/Shared/ModelNameInput';
 
 type ProviderOption = {
   id: string;
@@ -80,6 +84,8 @@ type ImportedTask = {
 type NewInteractiveTaskModalProps = {
   open: boolean;
   onClose: () => void;
+  submitError?: string | null;
+  onClearSubmitError?: () => void;
   onSubmit: (
     data: {
       title: string;
@@ -87,6 +93,7 @@ type NewInteractiveTaskModalProps = {
       memory?: string;
       accelerators?: string;
       interactive_type: 'vscode' | 'jupyter' | 'vllm' | 'ssh' | 'ollama';
+      template_id: string;
       provider_id?: string;
       env_parameters?: Record<string, string>;
       local?: boolean;
@@ -105,6 +112,8 @@ type NewInteractiveTaskModalProps = {
 export default function NewInteractiveTaskModal({
   open,
   onClose,
+  submitError = null,
+  onClearSubmitError,
   onSubmit,
   isSubmitting = false,
   providers,
@@ -124,7 +133,6 @@ export default function NewInteractiveTaskModal({
   const [cpus, setCpus] = React.useState('');
   const [memory, setMemory] = React.useState('');
   const [accelerators, setAccelerators] = React.useState('');
-  const [isLocal, setIsLocal] = React.useState(false);
   const [selectedProviderId, setSelectedProviderId] = React.useState('');
   const [configFieldValues, setConfigFieldValues] = React.useState<
     Record<string, string>
@@ -137,57 +145,43 @@ export default function NewInteractiveTaskModal({
   >(null);
   const { addNotification } = useNotification();
 
-  // Helper to check if a provider supports requested accelerators
+  const loadingMessages = React.useMemo(
+    () => [
+      'Contacting compute provider…',
+      'Reserving resources…',
+      'Preparing environment…',
+      'Submitting job configuration…',
+      'Waiting for job ID…',
+    ],
+    [],
+  );
+  const [loadingMessageIndex, setLoadingMessageIndex] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!open || !isSubmitting || loadingMessages.length === 0) {
+      return;
+    }
+
+    setLoadingMessageIndex(0);
+
+    const interval = window.setInterval(() => {
+      setLoadingMessageIndex((prev) => {
+        const lastIndex = loadingMessages.length - 1;
+        if (prev >= lastIndex) {
+          return lastIndex;
+        }
+        return prev + 1;
+      });
+    }, 1500);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [open, isSubmitting, loadingMessages]);
+
   const isProviderCompatible = React.useCallback(
-    (provider: any, taskSupportedAccelerators: string | undefined) => {
-      if (!taskSupportedAccelerators) return true;
-
-      const supported = provider.config?.supported_accelerators || [];
-      if (supported.length === 0) return true; // Default to compatible if not specified
-
-      const reqAcc = String(taskSupportedAccelerators).toLowerCase();
-
-      // Check for Apple Silicon
-      if (
-        (reqAcc.includes('apple') || reqAcc.includes('mps')) &&
-        supported.includes('AppleSilicon')
-      ) {
-        return true;
-      }
-
-      // Check for NVIDIA
-      if (
-        (reqAcc.includes('nvidia') ||
-          reqAcc.includes('cuda') ||
-          reqAcc.includes('rtx') ||
-          reqAcc.includes('a100') ||
-          reqAcc.includes('h100') ||
-          reqAcc.includes('v100')) &&
-        supported.includes('NVIDIA')
-      ) {
-        return true;
-      }
-
-      // Check for AMD
-      if (
-        (reqAcc.includes('amd') || reqAcc.includes('rocm')) &&
-        supported.includes('AMD')
-      ) {
-        return true;
-      }
-
-      // Check for CPU
-      if (reqAcc.includes('cpu') && supported.includes('cpu')) {
-        return true;
-      }
-
-      // If it's just a number, we assume it's NVIDIA/CUDA
-      if (/^\d+$/.test(reqAcc)) {
-        return supported.includes('NVIDIA');
-      }
-
-      return false;
-    },
+    (provider: any, taskSupportedAccelerators: string | string[] | undefined) =>
+      isProviderCompatibleWithAccelerators(provider, taskSupportedAccelerators),
     [],
   );
 
@@ -224,6 +218,14 @@ export default function NewInteractiveTaskModal({
     return [];
   }, [teamGalleryData]);
 
+  const teamInteractiveGallery = React.useMemo(() => {
+    return teamGallery.filter(
+      (entry: any) =>
+        entry?.subtype === 'interactive' ||
+        entry?.config?.subtype === 'interactive',
+    );
+  }, [teamGallery]);
+
   React.useEffect(() => {
     if (!open) {
       setStep('provider');
@@ -232,7 +234,6 @@ export default function NewInteractiveTaskModal({
       setCpus('');
       setMemory('');
       setAccelerators('');
-      setIsLocal(false);
       setConfigFieldValues({});
       setSelectedProviderId('');
       setActiveGalleryTab('interactive');
@@ -246,11 +247,14 @@ export default function NewInteractiveTaskModal({
       return;
     }
     if (!selectedProviderId) {
-      // Don't auto-select first one, let user pick in the first step
+      // Auto-select the first provider by default for a smoother experience
+      setSelectedProviderId(providers[0].id);
       return;
     }
     if (!providers.find((p) => p.id === selectedProviderId)) {
-      setSelectedProviderId('');
+      // If the previously selected provider is no longer available,
+      // fall back to the first available provider.
+      setSelectedProviderId(providers[0].id);
     }
   }, [open, providers, selectedProviderId]);
 
@@ -259,13 +263,13 @@ export default function NewInteractiveTaskModal({
     [providers, selectedProviderId],
   );
 
-  React.useEffect(() => {
-    if (selectedProvider?.type === 'local') {
-      setIsLocal(true);
-    }
-  }, [selectedProvider]);
+  /** True when the chosen compute provider is the local one; ngrok is not required then. */
+  const isLocalProvider = selectedProvider?.type === 'local';
 
   const handleTemplateSelect = (template: InteractiveTemplate) => {
+    if (isSubmitting) {
+      return;
+    }
     setSelectedTemplate(template);
     setStep('config');
     // Initialize config field values
@@ -274,11 +278,52 @@ export default function NewInteractiveTaskModal({
       if (field.field_type === 'integer' && field.env_var === 'TP_SIZE') {
         initialValues[field.env_var] = '1';
       }
+      if (field.env_var === 'NGROK_AUTH_TOKEN' && !isLocalProvider) {
+        initialValues[field.env_var] = '{{secret._NGROK_AUTH_TOKEN}}';
+      }
     });
     setConfigFieldValues(initialValues);
   };
 
+  // Keep NGROK_AUTH_TOKEN aligned with local/remote behavior:
+  // - For remote (non-local) sessions, default to {{secret._NGROK_AUTH_TOKEN}} if empty.
+  // - For local/direct sessions, drop NGROK_AUTH_TOKEN so secret is not required.
+  React.useEffect(() => {
+    if (!selectedTemplate) return;
+
+    const hasNgrokField = selectedTemplate.env_parameters?.some(
+      (field) => field.env_var === 'NGROK_AUTH_TOKEN',
+    );
+    if (!hasNgrokField) return;
+
+    if (isLocalProvider) {
+      // Remove NGROK_AUTH_TOKEN entirely for local/direct sessions
+      setConfigFieldValues((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, 'NGROK_AUTH_TOKEN')) {
+          return prev;
+        }
+        const { NGROK_AUTH_TOKEN: _omit, ...rest } = prev;
+        return rest;
+      });
+    } else if (selectedProvider?.type !== 'local') {
+      // Ensure remote sessions have a default secret placeholder if none is set
+      setConfigFieldValues((prev) => {
+        const current = prev['NGROK_AUTH_TOKEN'];
+        if (current && current.trim().length > 0) {
+          return prev;
+        }
+        return {
+          ...prev,
+          NGROK_AUTH_TOKEN: '{{secret._NGROK_AUTH_TOKEN}}',
+        };
+      });
+    }
+  }, [isLocalProvider, selectedProvider, selectedTemplate]);
+
   const handleBack = () => {
+    if (isSubmitting) {
+      return;
+    }
     if (step === 'config') {
       setStep('gallery');
       setSelectedTemplate(null);
@@ -296,6 +341,9 @@ export default function NewInteractiveTaskModal({
   };
 
   const handleImportTeamTask = async (galleryIdentifier: string | number) => {
+    if (isSubmitting) {
+      return;
+    }
     if (!experimentInfo?.id) {
       addNotification({
         type: 'warning',
@@ -316,6 +364,7 @@ export default function NewInteractiveTaskModal({
           body: JSON.stringify({
             gallery_id: galleryIdentifier.toString(),
             experiment_id: experimentInfo.id,
+            is_interactive: true,
           }),
         },
       );
@@ -350,6 +399,9 @@ export default function NewInteractiveTaskModal({
 
   const handleSubmit = (e: React.FormEvent, shouldLaunch: boolean = false) => {
     e.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     if (!title.trim()) {
       return;
     }
@@ -365,11 +417,19 @@ export default function NewInteractiveTaskModal({
     // Validate required config fields
     const requiredFields = (
       selectedTemplate.env_parameters?.filter((f) => f.required) || []
-    ).filter((f) => !(isLocal && f.env_var === 'NGROK_AUTH_TOKEN'));
+    ).filter((f) => !(isLocalProvider && f.env_var === 'NGROK_AUTH_TOKEN'));
     for (const field of requiredFields) {
       if (!configFieldValues[field.env_var]?.trim()) {
         return;
       }
+    }
+
+    // Persist model name to history before submitting
+    const modelName = configFieldValues['MODEL_NAME'];
+    if (modelName?.trim() && selectedTemplate) {
+      const taskTypeOrId =
+        selectedTemplate.interactive_type || selectedTemplate.id;
+      saveModelToHistory(getModelHistoryKey(taskTypeOrId), modelName.trim());
     }
 
     onSubmit(
@@ -387,7 +447,7 @@ export default function NewInteractiveTaskModal({
         template_id: selectedTemplate.id,
         provider_id: selectedProviderId,
         env_parameters: configFieldValues,
-        local: isLocal,
+        local: !!isLocalProvider,
       },
       shouldLaunch,
     );
@@ -400,7 +460,7 @@ export default function NewInteractiveTaskModal({
 
     const requiredFields = (
       selectedTemplate.env_parameters?.filter((f) => f.required) || []
-    ).filter((f) => !(isLocal && f.env_var === 'NGROK_AUTH_TOKEN'));
+    ).filter((f) => !(isLocalProvider && f.env_var === 'NGROK_AUTH_TOKEN'));
     for (const field of requiredFields) {
       if (!configFieldValues[field.env_var]?.trim()) {
         return false;
@@ -408,7 +468,13 @@ export default function NewInteractiveTaskModal({
     }
 
     return true;
-  }, [title, selectedProviderId, selectedTemplate, configFieldValues]);
+  }, [
+    title,
+    selectedProviderId,
+    selectedTemplate,
+    configFieldValues,
+    isLocalProvider,
+  ]);
 
   return (
     <Modal open={open} onClose={onClose}>
@@ -423,7 +489,7 @@ export default function NewInteractiveTaskModal({
         <ModalClose />
         <DialogTitle>
           {step === 'provider'
-            ? 'Select Provider'
+            ? 'Select Compute Provider'
             : step === 'gallery'
               ? 'New Interactive Task'
               : 'Configure Task'}
@@ -432,6 +498,29 @@ export default function NewInteractiveTaskModal({
           <DialogContent
             sx={{ maxHeight: '60vh', overflow: 'auto', padding: 1 }}
           >
+            {submitError && (
+              <Alert
+                variant="soft"
+                color="danger"
+                sx={{ mb: 1 }}
+                endDecorator={
+                  onClearSubmitError ? (
+                    <IconButton
+                      variant="plain"
+                      color="danger"
+                      onClick={onClearSubmitError}
+                      aria-label="Dismiss error"
+                    >
+                      <XIcon size={16} />
+                    </IconButton>
+                  ) : null
+                }
+              >
+                <Typography level="body-sm" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {submitError}
+                </Typography>
+              </Alert>
+            )}
             {step === 'provider' && (
               <Stack spacing={3} sx={{ py: 2 }}>
                 <Typography level="body-md">
@@ -440,12 +529,12 @@ export default function NewInteractiveTaskModal({
                   next step.
                 </Typography>
                 <FormControl required>
-                  <FormLabel>Provider</FormLabel>
+                  <FormLabel>Compute Provider</FormLabel>
                   <Select
                     placeholder={
                       providers.length
-                        ? 'Select a provider'
-                        : 'No providers configured'
+                        ? 'Select a compute provider'
+                        : 'No compute providers configured'
                     }
                     value={selectedProviderId || null}
                     onChange={(_, value) => setSelectedProviderId(value || '')}
@@ -494,7 +583,7 @@ export default function NewInteractiveTaskModal({
                   sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}
                 >
                   <Button
-                    disabled={!selectedProviderId}
+                    disabled={!selectedProviderId || isSubmitting}
                     onClick={() => setStep('gallery')}
                     endDecorator={<ArrowRightIcon size={16} />}
                   >
@@ -512,36 +601,24 @@ export default function NewInteractiveTaskModal({
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="Interactive session name"
                     autoFocus
+                    disabled={isSubmitting}
                   />
                 </FormControl>
 
                 <FormControl>
-                  <FormLabel>Provider</FormLabel>
-                  <Select
-                    placeholder={
-                      providers.length
-                        ? 'Select a provider'
-                        : 'No providers configured'
+                  <FormLabel>Compute Provider</FormLabel>
+                  <Input
+                    value={
+                      selectedProvider?.name ||
+                      (providers.length
+                        ? 'Provider selected in previous step'
+                        : 'No providers configured')
                     }
-                    value={selectedProviderId || null}
-                    onChange={(_, value) => setSelectedProviderId(value || '')}
-                    disabled={
-                      isSubmitting ||
-                      isProvidersLoading ||
-                      providers.length === 0
-                    }
-                    slotProps={{
-                      listbox: { sx: { maxHeight: 240 } },
-                    }}
-                  >
-                    {providers.map((provider) => (
-                      <Option key={provider.id} value={provider.id}>
-                        {provider.name}
-                      </Option>
-                    ))}
-                  </Select>
+                    disabled
+                    readOnly
+                  />
                   <FormHelperText>
-                    Choose which provider should run this interactive session.
+                    Provider was chosen on the previous screen.
                   </FormHelperText>
                 </FormControl>
 
@@ -562,58 +639,71 @@ export default function NewInteractiveTaskModal({
                   </Alert>
                 )}
 
-                {selectedProvider?.type !== 'local' && (
-                  <>
-                    <Checkbox
-                      label="Enable direct web access (no tunnel)"
-                      checked={isLocal}
-                      onChange={(e) => setIsLocal(e.target.checked)}
-                    />
-                    <FormHelperText sx={{ mt: -2 }}>
-                      When enabled, the session will be accessible directly via
-                      a local address (e.g. http://localhost:8888). Recommended
-                      for local providers only.
-                    </FormHelperText>
-                  </>
-                )}
-
                 {selectedTemplate?.env_parameters &&
                   selectedTemplate.env_parameters.length > 0 && (
                     <>
-                      {selectedTemplate.env_parameters.map((field) => (
-                        <FormControl
-                          key={field.env_var}
-                          required={
-                            field.required &&
-                            !(isLocal && field.env_var === 'NGROK_AUTH_TOKEN')
-                          }
-                          disabled={
-                            isLocal && field.env_var === 'NGROK_AUTH_TOKEN'
-                          }
-                        >
-                          <FormLabel>{field.field_name}</FormLabel>
-                          <Input
-                            type={
-                              field.password
-                                ? 'password'
-                                : field.field_type === 'integer'
-                                  ? 'number'
-                                  : 'text'
-                            }
-                            value={configFieldValues[field.env_var] || ''}
-                            onChange={(e) =>
-                              handleConfigFieldChange(
-                                field.env_var,
-                                e.target.value,
+                      {selectedTemplate.env_parameters
+                        .filter((field) => field.env_var !== 'NGROK_AUTH_TOKEN')
+                        .map((field) => (
+                          <FormControl
+                            key={field.env_var}
+                            required={
+                              field.required &&
+                              !(
+                                isLocalProvider &&
+                                field.env_var === 'NGROK_AUTH_TOKEN'
                               )
                             }
-                            placeholder={field.placeholder}
-                          />
-                          {field.help_text && (
-                            <FormHelperText>{field.help_text}</FormHelperText>
-                          )}
-                        </FormControl>
-                      ))}
+                            disabled={
+                              isSubmitting ||
+                              (isLocalProvider &&
+                                field.env_var === 'NGROK_AUTH_TOKEN')
+                            }
+                          >
+                            <FormLabel>{field.field_name}</FormLabel>
+                            {field.env_var === 'MODEL_NAME' ? (
+                              <ModelNameInput
+                                value={configFieldValues[field.env_var] || ''}
+                                onChange={(v) =>
+                                  handleConfigFieldChange(field.env_var, v)
+                                }
+                                taskTypeOrId={
+                                  selectedTemplate?.interactive_type ||
+                                  selectedTemplate?.id
+                                }
+                                placeholder={field.placeholder}
+                                disabled={isSubmitting}
+                                required={!!field.required}
+                              />
+                            ) : (
+                              <Input
+                                type={
+                                  field.password
+                                    ? 'password'
+                                    : field.field_type === 'integer'
+                                      ? 'number'
+                                      : 'text'
+                                }
+                                value={configFieldValues[field.env_var] || ''}
+                                onChange={(e) =>
+                                  handleConfigFieldChange(
+                                    field.env_var,
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder={field.placeholder}
+                                disabled={
+                                  isSubmitting ||
+                                  (isLocalProvider &&
+                                    field.env_var === 'NGROK_AUTH_TOKEN')
+                                }
+                              />
+                            )}
+                            {field.help_text && (
+                              <FormHelperText>{field.help_text}</FormHelperText>
+                            )}
+                          </FormControl>
+                        ))}
                     </>
                   )}
 
@@ -629,6 +719,7 @@ export default function NewInteractiveTaskModal({
                         value={cpus}
                         onChange={(e) => setCpus(e.target.value)}
                         placeholder="e.g. 4"
+                        disabled={isSubmitting}
                       />
                     </FormControl>
 
@@ -638,6 +729,7 @@ export default function NewInteractiveTaskModal({
                         value={memory}
                         onChange={(e) => setMemory(e.target.value)}
                         placeholder="e.g. 16"
+                        disabled={isSubmitting}
                       />
                     </FormControl>
 
@@ -647,6 +739,7 @@ export default function NewInteractiveTaskModal({
                         value={accelerators}
                         onChange={(e) => setAccelerators(e.target.value)}
                         placeholder="e.g. RTX3090:1 or H100:8"
+                        disabled={isSubmitting}
                       />
                     </FormControl>
                   </Stack>
@@ -675,11 +768,12 @@ export default function NewInteractiveTaskModal({
                   size="sm"
                   value={activeGalleryTab}
                   onChange={(_e, val) => {
-                    if (val) {
-                      setActiveGalleryTab(
-                        val as 'interactive' | 'team-interactive',
-                      );
+                    if (isSubmitting || !val) {
+                      return;
                     }
+                    setActiveGalleryTab(
+                      val as 'interactive' | 'team-interactive',
+                    );
                   }}
                 >
                   <TabList>
@@ -774,7 +868,11 @@ export default function NewInteractiveTaskModal({
                                     borderColor: 'primary.500',
                                   },
                                 }}
-                                onClick={() => handleTemplateSelect(template)}
+                                onClick={() => {
+                                  if (!isSubmitting) {
+                                    handleTemplateSelect(template);
+                                  }
+                                }}
                               >
                                 <CardContent>
                                   {template.icon && (
@@ -871,7 +969,7 @@ export default function NewInteractiveTaskModal({
 
                     {!teamGalleryIsLoading &&
                       teamGalleryData &&
-                      teamGallery.length === 0 && (
+                      teamInteractiveGallery.length === 0 && (
                         <Typography level="body-sm" color="neutral">
                           No team interactive tasks available.
                         </Typography>
@@ -879,9 +977,9 @@ export default function NewInteractiveTaskModal({
 
                     {!teamGalleryIsLoading &&
                       teamGalleryData &&
-                      teamGallery.length > 0 && (
+                      teamInteractiveGallery.length > 0 && (
                         <Grid container spacing={2}>
-                          {teamGallery
+                          {teamInteractiveGallery
                             .filter((task: any) => {
                               if (
                                 selectedProvider?.type === 'local' &&
@@ -929,9 +1027,11 @@ export default function NewInteractiveTaskModal({
                                         borderColor: 'primary.500',
                                       },
                                     }}
-                                    onClick={() =>
-                                      handleImportTeamTask(galleryIdentifier)
-                                    }
+                                    onClick={() => {
+                                      if (!isSubmitting) {
+                                        handleImportTeamTask(galleryIdentifier);
+                                      }
+                                    }}
                                   >
                                     <CardContent>
                                       {task.icon && (
@@ -1016,18 +1116,12 @@ export default function NewInteractiveTaskModal({
                 </Button>
               )}
               {step === 'config' && (
-                <Stack direction="row" spacing={2}>
-                  <Button
-                    variant="outlined"
-                    loading={isSubmitting}
-                    disabled={isSubmitting || !canSubmit}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleSubmit(e, false);
-                    }}
-                  >
-                    Save
-                  </Button>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  {isSubmitting && (
+                    <Typography level="body-sm">
+                      {loadingMessages[loadingMessageIndex]}
+                    </Typography>
+                  )}
                   <Button
                     variant="solid"
                     color="primary"

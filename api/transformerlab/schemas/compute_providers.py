@@ -12,8 +12,9 @@ class ProviderConfigBase(BaseModel):
     # SkyPilot-specific config
     server_url: Optional[str] = None
     api_token: Optional[str] = None
+    dstack_project: Optional[str] = None
     default_env_vars: Dict[str, str] = Field(default_factory=dict)
-    default_entrypoint_command: Optional[str] = None
+    default_entrypoint_run: Optional[str] = None
 
     # SLURM-specific config
     mode: Optional[str] = None  # "rest" or "ssh"
@@ -51,6 +52,7 @@ class ProviderUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     config: Optional[ProviderConfigBase] = None
+    disabled: Optional[bool] = None
 
 
 class ProviderRead(BaseModel):
@@ -64,6 +66,7 @@ class ProviderRead(BaseModel):
     created_by_user_id: str
     created_at: datetime
     updated_at: datetime
+    disabled: bool
 
     class Config:
         from_attributes = True
@@ -82,7 +85,7 @@ def mask_sensitive_config(config: Dict[str, Any], provider_type: str) -> Dict[st
     """
     masked = config.copy()
 
-    # Mask API tokens
+    # Mask API tokens for all providers.
     if "api_token" in masked and masked["api_token"]:
         masked["api_token"] = "***"
 
@@ -104,7 +107,7 @@ class ProviderTemplateLaunchRequest(BaseModel):
     )
     task_name: Optional[str] = Field(None, description="Friendly task name")
     cluster_name: Optional[str] = Field(None, description="Base cluster name, suffix is appended automatically")
-    command: str = Field(..., description="Command to execute on the cluster")
+    run: str = Field(..., description="Run command to execute on the cluster")
     subtype: Optional[str] = Field(None, description="Optional subtype for filtering")
     interactive_type: Optional[str] = Field(None, description="Interactive task type (e.g. vscode)")
     interactive_gallery_id: Optional[str] = Field(
@@ -133,8 +136,8 @@ class ProviderTemplateLaunchRequest(BaseModel):
     )
     provider_name: Optional[str] = None
     github_repo_url: Optional[str] = None
-    github_directory: Optional[str] = None
-    github_branch: Optional[str] = None
+    github_repo_dir: Optional[str] = None
+    github_repo_branch: Optional[str] = None
     # Sweep configuration
     run_sweeps: Optional[bool] = Field(
         default=False,
@@ -159,6 +162,22 @@ class ProviderTemplateLaunchRequest(BaseModel):
     minutes_requested: Optional[int] = Field(
         default=None,
         description="Number of minutes requested for this task. Required for quota tracking.",
+    )
+    enable_trackio: Optional[bool] = Field(
+        default=False,
+        description="When True, set TLAB_TRACKIO_AUTO_INIT=true in the job environment so lab SDK can auto-integrate with Trackio.",
+    )
+    enable_profiling: Optional[bool] = Field(
+        default=False,
+        description="When True, set _TFL_PROFILING=1 to enable system-level CPU/GPU/memory sampling via tfl-remote-trap.",
+    )
+    enable_profiling_torch: Optional[bool] = Field(
+        default=False,
+        description="When True (requires enable_profiling), also set _TFL_PROFILING_TORCH=1 to inject torch.profiler and export a Chrome trace.",
+    )
+    trackio_project_name: Optional[str] = Field(
+        default=None,
+        description="TrackIO project name for shared project; used when enable_trackio=True. Omit or empty to use 'default'.",
     )
 
 

@@ -96,7 +96,7 @@ class BaseLabResource(ABC):
         # On any error return an empty dict
         for attempt in range(max_retries):
             try:
-                async with await storage.open(json_file, "r", encoding="utf-8") as f:
+                async with await storage.open(json_file, "r", encoding="utf-8", uncached=uncached) as f:
                     content = await f.read()
                     # Clean the content - remove trailing whitespace and extra characters
                     content = content.strip()
@@ -156,6 +156,20 @@ class BaseLabResource(ABC):
         """Sets the value of a single top-level field in a JSON object"""
         json_data = await self.get_json_data(uncached=True)
         json_data[key] = value
+        await self._set_json_data(json_data)
+
+    async def _update_json_data_fields(self, updates: dict):
+        """
+        Update multiple top-level fields in a JSON object in one write.
+
+        This performs a single read-modify-write cycle to reduce repeated writes when
+        several fields need updating at once.
+        """
+        if not isinstance(updates, dict):
+            raise TypeError("updates must be a dict")
+
+        json_data = await self.get_json_data(uncached=True)
+        json_data.update(updates)
         await self._set_json_data(json_data)
 
     async def delete(self):

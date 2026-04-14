@@ -26,7 +26,6 @@ import {
   GithubIcon,
   DownloadIcon,
   ScanTextIcon,
-  PlusIcon,
   Trash2Icon,
   GraduationCapIcon,
   ChartColumnIncreasingIcon,
@@ -36,8 +35,8 @@ import { useExperimentInfo } from 'renderer/lib/ExperimentInfoContext';
 import * as chatAPI from '../../lib/transformerlab-api-sdk';
 import { fetcher } from '../../lib/transformerlab-api-sdk';
 import { useNotification } from '../Shared/NotificationSystem';
-import NewTeamTaskModal from './NewTeamTaskModal';
-import TeamInteractiveGalleryModal from './TeamInteractiveGalleryModal';
+import TeamTaskYamlPreviewModal from './TeamTaskYamlPreviewModal';
+import FileBrowserModal from '../Experiment/Tasks/FileBrowserModal';
 
 // Custom filter function for tasks gallery (uses 'title' or 'name' field)
 function filterTasksGallery(data: any[], searchText: string = '') {
@@ -49,9 +48,7 @@ function filterTasksGallery(data: any[], searchText: string = '') {
       title.toLowerCase().includes(lowerSearch) ||
       description.toLowerCase().includes(lowerSearch) ||
       (task.github_repo_url || '').toLowerCase().includes(lowerSearch) ||
-      (task.github_repo_branch || task.github_branch || '')
-        .toLowerCase()
-        .includes(lowerSearch)
+      (task.github_repo_branch || '').toLowerCase().includes(lowerSearch)
     );
   });
   return filteredData;
@@ -123,6 +120,8 @@ function TaskCard({
   task,
   galleryIdentifier,
   onImport,
+  onViewFiles,
+  onViewTaskYaml,
   isImporting,
   disableImport,
   showCheckbox,
@@ -132,6 +131,8 @@ function TaskCard({
   task: any;
   galleryIdentifier: string | number;
   onImport: (identifier: string | number) => void;
+  onViewFiles?: (identifier: string | number, task: any) => void;
+  onViewTaskYaml?: (identifier: string | number, task: any) => void;
   isImporting: boolean;
   disableImport: boolean;
   showCheckbox?: boolean;
@@ -202,7 +203,7 @@ function TaskCard({
                   href={generateGithubLink(
                     task.github_repo_url,
                     task?.github_repo_dir,
-                    task?.github_repo_branch ?? task?.github_branch,
+                    task?.github_repo_branch,
                   )}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -224,7 +225,7 @@ function TaskCard({
                   href={generateGithubLink(
                     task.github_repo_url,
                     task?.github_repo_dir,
-                    task?.github_repo_branch ?? task?.github_branch,
+                    task?.github_repo_branch,
                   )}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -244,7 +245,7 @@ function TaskCard({
                   {formatGithubPath(
                     task.github_repo_url,
                     task?.github_repo_dir,
-                    task?.github_repo_branch ?? task?.github_branch,
+                    task?.github_repo_branch,
                   )}
                 </Typography>
               </Box>
@@ -273,6 +274,24 @@ function TaskCard({
           )}
         </Stack>
         <CardActions>
+          {onViewTaskYaml && (
+            <Button
+              variant="outlined"
+              color="neutral"
+              onClick={() => onViewTaskYaml(galleryIdentifier, task)}
+            >
+              View Task
+            </Button>
+          )}
+          {onViewFiles && (
+            <Button
+              variant="outlined"
+              color="neutral"
+              onClick={() => onViewFiles(galleryIdentifier, task)}
+            >
+              View Files
+            </Button>
+          )}
           <Button
             variant="soft"
             color="success"
@@ -302,12 +321,18 @@ export default function TasksGallery() {
   const [importingIndex, setImportingIndex] = useState<string | number | null>(
     null,
   );
-  const [newTeamTaskModalOpen, setNewTeamTaskModalOpen] = useState(false);
-  const [isSubmittingTeamTask, setIsSubmittingTeamTask] = useState(false);
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
-  const [teamInteractiveGalleryModalOpen, setTeamInteractiveGalleryModalOpen] =
-    useState(false);
+  const [teamGalleryFilesModal, setTeamGalleryFilesModal] = useState<{
+    open: boolean;
+    galleryId: string | null;
+    title?: string | null;
+  }>({ open: false, galleryId: null, title: null });
+  const [teamTaskYamlModal, setTeamTaskYamlModal] = useState<{
+    open: boolean;
+    galleryId: string | null;
+    title?: string | null;
+  }>({ open: false, galleryId: null, title: null });
 
   // Set active tab based on URL parameter
   useEffect(() => {
@@ -409,9 +434,9 @@ export default function TasksGallery() {
 
       // Navigate to the appropriate page
       if (activeTab === 'interactive' || activeTab === 'team-interactive') {
-        navigate(`/experiment/interactive`);
+        navigate(`/experiment/${experimentInfo?.name}/interactive`);
       } else {
-        navigate(`/experiment/tasks`);
+        navigate(`/experiment/${experimentInfo?.name}/tasks`);
       }
     } catch (err: any) {
       console.error('Error importing template:', err);
@@ -424,61 +449,16 @@ export default function TasksGallery() {
     }
   };
 
-  const handleAddTeamTask = async (data: {
-    title: string;
-    description?: string;
-    setup?: string;
-    command: string;
-    cpus?: string;
-    memory?: string;
-    accelerators?: string;
-    github_repo_url?: string;
-    github_repo_dir?: string;
-    github_repo_branch?: string;
-    github_branch?: string;
-  }) => {
-    setIsSubmittingTeamTask(true);
-    try {
-      const response = await chatAPI.authenticatedFetch(
-        chatAPI.Endpoints.Task.AddToTeamGallery(experimentInfo?.id || ''),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            ...data,
-            github_branch: data.github_repo_branch ?? data.github_branch,
-          }),
-        },
-      );
+  const handleViewTeamFiles = (identifier: string | number, task: any) => {
+    const galleryId = String(task?.id || task?.title || identifier);
+    const title = task?.title || task?.name || galleryId;
+    setTeamGalleryFilesModal({ open: true, galleryId, title });
+  };
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        addNotification({
-          type: 'danger',
-          message: `Failed to add team template: ${errorText}`,
-        });
-        return;
-      }
-
-      const result = await response.json();
-      addNotification({
-        type: 'success',
-        message: result?.message || 'Team template added successfully!',
-      });
-
-      // Refresh the team gallery
-      teamMutate();
-    } catch (err: any) {
-      console.error('Error adding team template:', err);
-      addNotification({
-        type: 'danger',
-        message: `Failed to add team template: ${err?.message || String(err)}`,
-      });
-    } finally {
-      setIsSubmittingTeamTask(false);
-    }
+  const handleViewTeamTaskYaml = (identifier: string | number, task: any) => {
+    const galleryId = String(task?.id || task?.title || identifier);
+    const title = task?.title || task?.name || galleryId;
+    setTeamTaskYamlModal({ open: true, galleryId, title });
   };
 
   const handleSelectTask = (taskId: string, selected: boolean) => {
@@ -567,18 +547,29 @@ export default function TasksGallery() {
   const globalGallery = data?.data || [];
   const teamGallery = teamData?.data || [];
   const interactiveGallery = interactiveData?.data || [];
+  const teamInteractiveGallery = teamGallery.filter(
+    (entry: any) =>
+      entry?.subtype === 'interactive' ||
+      entry?.config?.subtype === 'interactive',
+  );
+  const teamNonInteractiveGallery = teamGallery.filter(
+    (entry: any) =>
+      !(
+        entry?.subtype === 'interactive' ||
+        entry?.config?.subtype === 'interactive'
+      ),
+  );
 
   // Determine which gallery to display
   let gallery;
   let isActiveLoading;
 
   if (activeTab === 'team') {
-    gallery = teamGallery;
+    gallery = teamNonInteractiveGallery;
     isActiveLoading = teamLoading;
   } else if (activeTab === 'team-interactive') {
-    // Team interactive shows empty gallery, open modal with button instead
-    gallery = [];
-    isActiveLoading = false;
+    gallery = teamInteractiveGallery;
+    isActiveLoading = teamLoading;
   } else if (activeTab === 'interactive') {
     gallery = interactiveGallery;
     isActiveLoading = interactiveLoading;
@@ -596,20 +587,36 @@ export default function TasksGallery() {
         height: '100%',
       }}
     >
-      <NewTeamTaskModal
-        open={newTeamTaskModalOpen}
-        onClose={() => setNewTeamTaskModalOpen(false)}
-        onSubmit={handleAddTeamTask}
-        isSubmitting={isSubmittingTeamTask}
-      />
-      <TeamInteractiveGalleryModal
-        open={teamInteractiveGalleryModalOpen}
-        onClose={() => setTeamInteractiveGalleryModalOpen(false)}
-        tasks={interactiveGallery}
-        isLoading={interactiveLoading}
-        onImport={handleImport}
-        importingIndex={importingIndex}
-      />
+      {experimentInfo?.id && teamGalleryFilesModal.open && (
+        <FileBrowserModal
+          open={teamGalleryFilesModal.open}
+          onClose={() =>
+            setTeamGalleryFilesModal({
+              open: false,
+              galleryId: null,
+              title: null,
+            })
+          }
+          mode="team-gallery"
+          galleryId={teamGalleryFilesModal.galleryId ?? ''}
+          galleryTitle={teamGalleryFilesModal.title}
+        />
+      )}
+      {experimentInfo?.id && teamTaskYamlModal.open && (
+        <TeamTaskYamlPreviewModal
+          open={teamTaskYamlModal.open}
+          onClose={() =>
+            setTeamTaskYamlModal({
+              open: false,
+              galleryId: null,
+              title: null,
+            })
+          }
+          experimentId={String(experimentInfo.id)}
+          galleryId={teamTaskYamlModal.galleryId ?? ''}
+          title={teamTaskYamlModal.title}
+        />
+      )}
       <Box
         sx={{
           display: 'flex',
@@ -652,13 +659,6 @@ export default function TasksGallery() {
                 Delete Selected ({selectedTasks.size})
               </Button>
             )}
-            <Button
-              startDecorator={<PlusIcon size={16} />}
-              onClick={() => setNewTeamTaskModalOpen(true)}
-              size="sm"
-            >
-              Add Team Task
-            </Button>
           </Stack>
         )}
         {activeTab === 'team-interactive' && (
@@ -675,13 +675,6 @@ export default function TasksGallery() {
                 Delete Selected ({selectedTasks.size})
               </Button>
             )}
-            <Button
-              startDecorator={<PlusIcon size={16} />}
-              onClick={() => setTeamInteractiveGalleryModalOpen(true)}
-              size="sm"
-            >
-              Add Team Interactive Task
-            </Button>
           </Stack>
         )}
       </Box>
@@ -764,23 +757,18 @@ export default function TasksGallery() {
         )}
         {!isActiveLoading && gallery.length === 0 && (
           <Box sx={{ textAlign: 'center', py: 8 }}>
-            {activeTab === 'team-interactive' ? (
+            <>
               <Typography level="body-lg" color="neutral">
                 No tasks available in the gallery.
               </Typography>
-            ) : (
-              <>
-                <Typography level="body-lg" color="neutral">
-                  No tasks available in the gallery.
-                </Typography>
-                {teamError && activeTab === 'team' && (
+              {teamError &&
+                (activeTab === 'team' || activeTab === 'team-interactive') && (
                   <Typography level="body-sm" color="danger" sx={{ mt: 1 }}>
                     Failed to load team tasks. Check workspace
                     team_specific_tasks.json.
                   </Typography>
                 )}
-              </>
-            )}
+            </>
           </Box>
         )}
         {!isActiveLoading && gallery.length > 0 && (
@@ -802,7 +790,6 @@ export default function TasksGallery() {
                       title?: string;
                       github_repo_url?: string;
                       github_repo_branch?: string;
-                      github_branch?: string;
                     }) =>
                       galleryTask === task ||
                       (galleryTask?.id &&
@@ -812,12 +799,8 @@ export default function TasksGallery() {
                         task?.title &&
                         galleryTask.title === task.title &&
                         galleryTask.github_repo_url === task.github_repo_url &&
-                        (galleryTask.github_repo_branch ??
-                          galleryTask.github_branch ??
-                          '') ===
-                          (task.github_repo_branch ??
-                            task.github_branch ??
-                            '')),
+                        (galleryTask.github_repo_branch ?? '') ===
+                          (task.github_repo_branch ?? '')),
                   );
                   galleryIdentifier =
                     originalIndex >= 0 ? originalIndex : filteredIndex;
@@ -830,6 +813,16 @@ export default function TasksGallery() {
                       task={task}
                       galleryIdentifier={galleryIdentifier}
                       onImport={handleImport}
+                      onViewFiles={
+                        activeTab === 'team' || activeTab === 'team-interactive'
+                          ? handleViewTeamFiles
+                          : undefined
+                      }
+                      onViewTaskYaml={
+                        activeTab === 'team' || activeTab === 'team-interactive'
+                          ? handleViewTeamTaskYaml
+                          : undefined
+                      }
                       isImporting={importingIndex === galleryIdentifier}
                       disableImport={
                         !experimentInfo?.id || importingIndex !== null

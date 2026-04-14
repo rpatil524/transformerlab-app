@@ -40,10 +40,15 @@ def set_organization_id(organization_id: str | None) -> None:
         # If TFL_REMOTE_STORAGE_ENABLED is true, use <cloud_protocol>://workspace_<team_id> instead of the value itself
         tfl_remote_storage_enabled = os.getenv("TFL_REMOTE_STORAGE_ENABLED", "false").lower() == "true"
         if tfl_remote_storage_enabled:
-            # Determine protocol based on TFL_STORAGE_PROVIDER (aws | gcp)
-            protocol = "gs://" if STORAGE_PROVIDER == "gcp" else "s3://"
+            # Determine protocol based on TFL_STORAGE_PROVIDER (aws | gcp | azure)
+            if STORAGE_PROVIDER == "gcp":
+                protocol = "gs://"
+            elif STORAGE_PROVIDER == "azure":
+                protocol = "abfs://"
+            else:
+                protocol = "s3://"
 
-            # Use cloud://workspace_<team_id> format
+            # Use <protocol>workspace-<team_id> format
             _current_tfl_storage_uri.set(f"{protocol}workspace-{organization_id}")
         elif STORAGE_PROVIDER == "localfs" and os.getenv("TFL_STORAGE_URI"):
             # Localfs: root_uri() should be org-scoped so set context to TFL_STORAGE_URI/orgs/<org_id>
@@ -54,17 +59,25 @@ def set_organization_id(organization_id: str | None) -> None:
         _current_tfl_storage_uri.set(None)
 
 
-def get_orgs_base_dir() -> str:
-    """Return the base directory containing org subdirectories.
+def get_organization_id() -> str | None:
+    """Return the current organization id from SDK context (or None)."""
+    return _current_org_id.get()
 
-    In localfs mode this is ``TFL_STORAGE_URI/orgs``; otherwise ``HOME_DIR/orgs``.
-    Functions that iterate over all orgs (e.g. to scan jobs) must use this
-    instead of hard-coding ``HOME_DIR/orgs`` so that the correct storage
-    location is consulted.
+
+def require_organization_id() -> str:
+    """Return the current organization id, or raise if not set.
+
+    Use this at the top of any code path that must run within an
+    org context (background tasks, executor threads, etc.).
     """
-    if STORAGE_PROVIDER == "localfs" and os.getenv("TFL_STORAGE_URI"):
-        return storage.join(os.getenv("TFL_STORAGE_URI", ""), "orgs")
-    return storage.join(HOME_DIR, "orgs")
+    org_id = _current_org_id.get()
+    if org_id is None:
+        raise RuntimeError(
+            "Organization context is required but not set. "
+            "Ensure set_organization_id() is called before this code path "
+            "(e.g. in request middleware or at the start of a background task)."
+        )
+    return org_id
 
 
 async def get_workspace_dir() -> str:
@@ -72,7 +85,8 @@ async def get_workspace_dir() -> str:
     # Only return container workspace path when value is exactly "true"
     # In localfs mode, workspace is TFL_STORAGE_URI/orgs/<org_id>/workspace; HOME_DIR stays app home
     if os.getenv("TFL_STORAGE_URI") is not None and STORAGE_PROVIDER != "localfs":
-        return await storage.root_uri()
+        root = await storage.root_uri()
+        return root
 
     # Explicit override wins
     if "TFL_WORKSPACE_DIR" in os.environ and not (
@@ -89,7 +103,8 @@ async def get_workspace_dir() -> str:
     if org_id:
         # Cloud: _current_tfl_storage_uri is the org workspace root. Localfs: TFL_STORAGE_URI/orgs/org_id/workspace
         if _current_tfl_storage_uri.get() is not None and STORAGE_PROVIDER != "localfs":
-            return _current_tfl_storage_uri.get()
+            ctx = _current_tfl_storage_uri.get()
+            return ctx
         if STORAGE_PROVIDER == "localfs" and os.getenv("TFL_STORAGE_URI"):
             path = storage.join(os.getenv("TFL_STORAGE_URI", ""), "orgs", org_id, "workspace")
         else:
@@ -98,7 +113,8 @@ async def get_workspace_dir() -> str:
         return path
 
     if os.getenv("TFL_STORAGE_URI") and STORAGE_PROVIDER != "localfs":
-        return await storage.root_uri()
+        root = await storage.root_uri()
+        return root
 
     path = storage.join(HOME_DIR, "workspace")
     await storage.makedirs(path, exist_ok=True)
@@ -113,7 +129,7 @@ WORKSPACE_DIR = HOME_DIR
 TFL_HOME_DIR is the directory that is the parent of the src and workspace directories.
 By default, it is set to ~/.transformerlab
 
-TFL_WORKSPACE_DIR is the directory where all the experiments, plugins, and models are stored.
+TFL_WORKSPACE_DIR is the directory where all the experiments, tasks, and models are stored.
 By default, it is set to TFL_HOME_DIR/workspace
 
 TFL_SOURCE_CODE_DIR is the directory where the source code is stored.
@@ -137,9 +153,16 @@ async def get_experiments_dir() -> str:
     return path
 
 
-async def get_jobs_dir() -> str:
-    workspace_dir = await get_workspace_dir()
-    path = storage.join(workspace_dir, "jobs")
+async def get_jobs_dir(experiment_id: str) -> str:
+    """
+    Return the filesystem directory for all jobs in an experiment.
+
+    Layout:
+        {workspace}/experiments/{experiment_id}/jobs/
+    """
+    experiments_dir = await get_experiments_dir()
+    experiment_id_safe = secure_filename(str(experiment_id))
+    path = storage.join(experiments_dir, experiment_id_safe, "jobs")
     await storage.makedirs(path, exist_ok=True)
     return path
 
@@ -159,17 +182,6 @@ async def get_logs_dir() -> str:
 async def experiment_dir_by_name(experiment_name: str) -> str:
     experiments_dir = await get_experiments_dir()
     return storage.join(experiments_dir, experiment_name)
-
-
-async def get_plugin_dir() -> str:
-    workspace = await get_workspace_dir()
-    return storage.join(workspace, "plugins")
-
-
-async def plugin_dir_by_name(plugin_name: str) -> str:
-    plugin_name = secure_filename(plugin_name)
-    plugin_dir = await get_plugin_dir()
-    return storage.join(plugin_dir, plugin_name)
 
 
 async def get_models_dir() -> str:
@@ -248,67 +260,100 @@ def get_galleries_cache_dir() -> str:
     return path
 
 
-async def get_job_dir(job_id: str | int) -> str:
+def get_trackio_dir(job_id: str | int) -> str:
     """
-    Return the filesystem directory for a specific job id under the jobs root.
-    Mirrors `Job.get_dir()` but provided here for convenience where a `Job`
-    instance is not readily available.
+    Return the isolated local Trackio directory for a specific job.
+
+    Layout:
+        /tmp/trackio/{job_id}/
     """
     job_id_safe = secure_filename(str(job_id))
-    jobs_dir = await get_jobs_dir()
+    return os.path.join("/tmp", "trackio", job_id_safe)
+
+
+async def get_job_dir(job_id: str | int, experiment_id: str) -> str:
+    """
+    Return the filesystem directory for a specific job inside an experiment.
+
+    Layout:
+        {workspace}/experiments/{experiment_id}/jobs/{job_id}/
+    """
+    job_id_safe = secure_filename(str(job_id))
+    jobs_dir = await get_jobs_dir(experiment_id)
     return storage.join(jobs_dir, job_id_safe)
 
 
-async def get_job_artifacts_dir(job_id: str | int) -> str:
+async def get_job_artifacts_dir(job_id: str | int, experiment_id: str) -> str:
     """
     Return the artifacts directory for a specific job, creating it if needed.
-    Example: ~/.transformerlab/workspace/jobs/<job_id>/artifacts
+    Example: ~/.transformerlab/workspace/experiments/<experiment_id>/jobs/<job_id>/artifacts
     """
-    job_dir = await get_job_dir(job_id)
+    job_dir = await get_job_dir(job_id, experiment_id)
     path = storage.join(job_dir, "artifacts")
     await storage.makedirs(path, exist_ok=True)
     return path
 
 
-async def get_job_checkpoints_dir(job_id: str | int) -> str:
+async def get_job_profiling_dir(job_id: str | int, experiment_id: str | None = None) -> str:
+    """
+    Return the profiling directory for a specific job, creating it if needed.
+
+    Layout:
+        {workspace}/experiments/{experiment_id}/jobs/{job_id}/profiling
+
+    If `experiment_id` is not provided, this function will attempt to resolve it from
+    the `_TFL_EXPERIMENT_ID` environment variable (used by the remote-trap wrapper).
+    """
+    if experiment_id is None:
+        experiment_id = os.environ.get("_TFL_EXPERIMENT_ID")
+    if not experiment_id:
+        raise ValueError(f"experiment_id is required for profiling dir (job_id={job_id})")
+
+    job_dir = await get_job_dir(job_id, experiment_id)
+    path = storage.join(job_dir, "profiling")
+    await storage.makedirs(path, exist_ok=True)
+    return path
+
+
+async def get_job_checkpoints_dir(job_id: str | int, experiment_id: str) -> str:
     """
     Return the checkpoints directory for a specific job, creating it if needed.
-    Example: ~/.transformerlab/workspace/jobs/<job_id>/checkpoints
+    Example: ~/.transformerlab/workspace/experiments/<experiment_id>/jobs/<job_id>/checkpoints
     """
-    job_dir = await get_job_dir(job_id)
+    job_dir = await get_job_dir(job_id, experiment_id)
     path = storage.join(job_dir, "checkpoints")
     await storage.makedirs(path, exist_ok=True)
     return path
 
 
-async def get_job_eval_results_dir(job_id: str | int) -> str:
+async def get_job_eval_results_dir(job_id: str | int, experiment_id: str) -> str:
     """
     Return the eval_results directory for a specific job, creating it if needed.
-    Example: ~/.transformerlab/workspace/jobs/<job_id>/eval_results
+    Example: ~/.transformerlab/workspace/experiments/<experiment_id>/jobs/<job_id>/eval_results
     """
-    job_dir = await get_job_dir(job_id)
+    job_dir = await get_job_dir(job_id, experiment_id)
     path = storage.join(job_dir, "eval_results")
     await storage.makedirs(path, exist_ok=True)
     return path
 
 
-async def get_job_models_dir(job_id: str | int) -> str:
+async def get_job_models_dir(job_id: str | int, experiment_id: str) -> str:
     """
     Return the models directory for a specific job, creating it if needed.
-    Example: ~/.transformerlab/workspace/jobs/<job_id>/models
+    Example: ~/.transformerlab/workspace/experiments/<experiment_id>/jobs/<job_id>/models
     """
-    job_dir = await get_job_dir(job_id)
+    job_dir = await get_job_dir(job_id, experiment_id)
     path = storage.join(job_dir, "models")
     await storage.makedirs(path, exist_ok=True)
     return path
 
 
-async def get_job_datasets_dir(job_id: str | int) -> str:
+async def get_job_datasets_dir(job_id: str | int, experiment_id: str) -> str:
     """
     Return the datasets directory for a specific job, creating it if needed.
-    Example: ~/.transformerlab/workspace/jobs/<job_id>/datasets
+    Example: ~/.transformerlab/workspace/experiments/<experiment_id>/jobs/<job_id>/datasets
     """
-    job_dir = await get_job_dir(job_id)
+    job_dir = await get_job_dir(job_id, experiment_id)
     path = storage.join(job_dir, "datasets")
     await storage.makedirs(path, exist_ok=True)
     return path
@@ -334,6 +379,35 @@ async def generation_output_file(experiment_name: str, generation_name: str) -> 
     return storage.join(p, "output.txt")
 
 
+def get_local_provider_root() -> str:
+    """
+    Return the root directory for all local-provider-only artifacts.
+
+    Layout:
+        ~/.transformerlab/local_provider/
+
+    This directory is intentionally local filesystem state (not remote storage) and is used for:
+      - base environment / venvs
+      - cached wheels / uv cache
+      - local provider config snapshots
+      - transient local-provider setup status files
+      - local provider runs (PIDs, logs, etc.)
+    """
+    root = os.path.join(HOME_DIR, "local_provider")
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def get_local_provider_config_path() -> str:
+    """
+    Return the path to the local provider config snapshot JSON file.
+
+    Layout:
+        ~/.transformerlab/local_provider/local_provider_config.json
+    """
+    return os.path.join(get_local_provider_root(), "local_provider_config.json")
+
+
 def _get_local_provider_runs_root() -> str:
     """
     Return the root directory for all local provider runs.
@@ -344,9 +418,9 @@ def _get_local_provider_runs_root() -> str:
     even when the main workspace is configured to use remote storage.
 
     Layout:
-        ~/.transformerlab/local_provider_runs/
+        ~/.transformerlab/local_provider/local_provider_runs/
     """
-    root = os.path.join(HOME_DIR, "local_provider_runs")
+    root = os.path.join(get_local_provider_root(), "local_provider_runs")
     os.makedirs(root, exist_ok=True)
     return root
 
@@ -390,3 +464,33 @@ def get_local_provider_job_dir(job_id: str | int, org_id: str | None = None) -> 
     job_dir = os.path.join(org_dir, job_id_safe)
     os.makedirs(job_dir, exist_ok=True)
     return job_dir
+
+
+def resolve_local_provider_job_dir(job_id_or_prefix: str | int, org_id: str | None = None) -> str | None:
+    """
+    Resolve an existing local provider job directory from a full job id or prefix.
+
+    Unlike get_local_provider_job_dir(), this function never creates directories.
+    It returns:
+      - exact match if present
+      - unique prefix match if exact is absent
+      - None if there is no match or the prefix is ambiguous
+    """
+    org_dir = get_local_provider_org_dir(org_id)
+    job_id_safe = secure_filename(str(job_id_or_prefix))
+    exact_dir = os.path.join(org_dir, job_id_safe)
+    if os.path.isdir(exact_dir):
+        return exact_dir
+
+    try:
+        entries = [
+            entry
+            for entry in os.listdir(org_dir)
+            if os.path.isdir(os.path.join(org_dir, entry)) and entry.startswith(job_id_safe)
+        ]
+    except OSError:
+        return None
+
+    if len(entries) == 1:
+        return os.path.join(org_dir, entries[0])
+    return None

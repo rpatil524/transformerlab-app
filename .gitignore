@@ -35,7 +35,9 @@ npm-debug.log.*
 # https://docs.cursor.com/context/ignore-files#default-ignore-list
 .cursor/
 .cursorignore
-.claude/
+.claude/todos/
+.claude/settings.local.json
+.claude/worktrees/
 
 .env
 **/.env
@@ -145,6 +147,7 @@ api/db.sqlite3
 api/db.sqlite3-journal
 api/workspace/
 api/temp/
+api/test/tmp/
 api/experiments/
 api/logs/
 api/*.log
@@ -219,3 +222,8 @@ cli/dist/*
 # Playwright
 playwright-report/
 test-results/
+
+# Secrets
+**/.secrets
+
+docs/superpowers/*

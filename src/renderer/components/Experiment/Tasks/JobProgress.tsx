@@ -1,13 +1,7 @@
-import {
-  Chip,
-  IconButton,
-  LinearProgress,
-  Stack,
-  Typography,
-  Tooltip,
-} from '@mui/joy';
-import { StopCircleIcon, Info } from 'lucide-react';
+import { Chip, IconButton, LinearProgress, Stack, Typography } from '@mui/joy';
+import { StopCircleIcon } from 'lucide-react';
 import Skeleton from '@mui/joy/Skeleton';
+import CircularProgress from '@mui/joy/CircularProgress';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import duration from 'dayjs/plugin/duration';
@@ -30,6 +24,12 @@ interface JobData {
   [key: string]: any;
 }
 
+interface LaunchProgressInfo {
+  phase?: string;
+  percent?: number;
+  message?: string;
+}
+
 interface JobProps {
   job: {
     id: string;
@@ -39,15 +39,22 @@ interface JobProps {
     job_data?: JobData;
     placeholder?: boolean;
   };
-  showLaunchResultInfo?: boolean;
+  launchProgress?: LaunchProgressInfo | null;
+  hideCircularLaunchProgressAtOrAbove?: number;
 }
 
 export default function JobProgress({
   job,
-  showLaunchResultInfo = false,
+  launchProgress,
+  hideCircularLaunchProgressAtOrAbove,
 }: JobProps) {
   const { experimentInfo } = useExperimentInfo();
   const { fetchWithAuth } = useAuth();
+  const stopping = job?.status === 'STOPPING';
+  const effectiveLaunchProgress =
+    job?.status === 'INTERACTIVE'
+      ? null
+      : (launchProgress ?? job?.job_data?.launch_progress ?? null);
 
   // Shared stop handler for both LAUNCHING and RUNNING states
   const handleStopJob = useCallback(async () => {
@@ -56,43 +63,37 @@ export default function JobProgress({
       return;
     }
 
-    if (job.type === 'REMOTE') {
-      // For REMOTE jobs, check if they have provider_id (new provider-based jobs)
-      const providerId = job.job_data?.provider_id;
-      const clusterName = job.job_data?.cluster_name;
+    // Check if job has provider metadata (works for both remote and local providers)
+    const providerId = job.job_data?.provider_id;
+    const clusterName = job.job_data?.cluster_name;
 
-      if (providerId && clusterName) {
-        // Use the providers stop endpoint
-        try {
-          const response = await fetchWithAuth(
-            chatAPI.Endpoints.ComputeProvider.StopCluster(
-              providerId,
-              clusterName,
-            ),
-            { method: 'POST' },
+    if (providerId && clusterName) {
+      try {
+        // Let the backend handle STOPPING status transition
+        if (experimentInfo?.id && job?.id) {
+          await chatAPI.authenticatedFetch(
+            chatAPI.Endpoints.Jobs.Stop(experimentInfo.id, job.id),
           );
-          if (response.ok && experimentInfo?.id && job?.id) {
-            // Update job status to STOPPED
-            await chatAPI.authenticatedFetch(
-              chatAPI.Endpoints.Jobs.Update(
-                experimentInfo.id,
-                job.id,
-                'STOPPED',
-              ),
-            );
-          }
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error('Failed to stop provider cluster:', error);
         }
-      } else {
-        // eslint-disable-next-line no-console
-        console.error(
-          'No cluster_name or provider_id found in REMOTE job data',
+        await fetchWithAuth(
+          chatAPI.Endpoints.ComputeProvider.StopCluster(
+            providerId,
+            clusterName,
+          ),
+          { method: 'POST' },
         );
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to stop provider cluster:', error);
+        // Roll back from STOPPING so the user can retry
+        if (experimentInfo?.id && job?.id) {
+          await chatAPI.authenticatedFetch(
+            chatAPI.Endpoints.Jobs.Update(experimentInfo.id, job.id, 'RUNNING'),
+          );
+        }
       }
     } else if (experimentInfo?.id && job?.id) {
-      // For other job types, use the regular stop endpoint
+      // For jobs without provider metadata, use the regular stop endpoint
       await chatAPI.authenticatedFetch(
         chatAPI.Endpoints.Jobs.Stop(experimentInfo.id, job.id),
       );
@@ -114,69 +115,23 @@ export default function JobProgress({
     const liveStatus = job?.job_data?.live_status;
     if (!liveStatus) return null;
 
-    if (liveStatus === 'started') {
-      return (
-        <Typography level="body-xs" color="neutral">
-          Remote command started on compute provider&hellip;
-        </Typography>
-      );
-    }
+    const isCrashed = liveStatus.toLowerCase().includes('crashed');
 
-    if (liveStatus === 'crashed') {
-      return (
-        <Typography level="body-xs" color="danger">
-          Remote command crashed. Check provider logs for details.
-        </Typography>
-      );
-    }
-
-    if (liveStatus === 'finished') {
-      return (
-        <Typography level="body-xs" color="neutral">
-          Remote command finished. Waiting for provider to finalize job
-          status&hellip;
-        </Typography>
-      );
-    }
-
-    return null;
+    return (
+      <Typography level="body-xs" color={isCrashed ? 'danger' : 'neutral'}>
+        {liveStatus}
+      </Typography>
+    );
   };
 
-  // Format provider launch result for display
-  const formatProviderLaunchResult = (launchResult: any): string => {
-    if (!launchResult) return '';
-    if (typeof launchResult === 'string') return launchResult;
-    if (typeof launchResult === 'object') {
-      const parts: string[] = [];
-      if (launchResult.request_id) {
-        parts.push(`Request ID: ${launchResult.request_id}`);
-      }
-      if (launchResult.cluster_name) {
-        parts.push(`Cluster: ${launchResult.cluster_name}`);
-      }
-      if (launchResult.status) {
-        parts.push(`Status: ${launchResult.status}`);
-      }
-      if (launchResult.message) {
-        parts.push(launchResult.message);
-      }
-      // Include any other relevant fields
-      Object.keys(launchResult).forEach((key) => {
-        if (
-          !['request_id', 'cluster_name', 'status', 'message'].includes(key)
-        ) {
-          const value = launchResult[key];
-          if (value !== null && value !== undefined) {
-            parts.push(`${key}: ${String(value)}`);
-          }
-        }
-      });
-      return parts.length > 0
-        ? parts.join('\n')
-        : JSON.stringify(launchResult, null, 2);
-    }
-    return String(launchResult);
-  };
+  const clampedLaunchPercent =
+    effectiveLaunchProgress?.percent == null
+      ? null
+      : Math.min(100, Math.max(0, effectiveLaunchProgress.percent));
+  const showCircularLaunchProgress =
+    clampedLaunchPercent != null &&
+    (hideCircularLaunchProgressAtOrAbove == null ||
+      clampedLaunchPercent < hideCircularLaunchProgressAtOrAbove);
 
   /* eslint-disable no-nested-ternary */
   return (
@@ -196,7 +151,26 @@ export default function JobProgress({
             sx={{ my: 0.5 }}
           />
         </>
-      ) : job?.status === 'LAUNCHING' || job?.status === 'INTERACTIVE' ? (
+      ) : job?.status === 'STOPPING' ? (
+        <>
+          <Stack direction="row" alignItems="center" gap={1}>
+            <Chip
+              sx={{
+                backgroundColor: jobChipColor(job.status),
+                color: 'var(--joy-palette-neutral-800)',
+              }}
+            >
+              STOPPING
+            </Chip>
+            <CircularProgress size="sm" thickness={2} />
+            <Typography level="body-xs" color="warning">
+              Shutting down&hellip;
+            </Typography>
+          </Stack>
+        </>
+      ) : job?.status === 'LAUNCHING' ||
+        job?.status === 'INTERACTIVE' ||
+        job?.status === 'WAITING' ? (
         <>
           <Stack direction="row" alignItems="center" gap={1}>
             <Chip
@@ -207,43 +181,65 @@ export default function JobProgress({
             >
               {job.status}
             </Chip>
-            {showLaunchResultInfo &&
-              job?.status === 'LAUNCHING' &&
-              job?.job_data?.provider_launch_result && (
-                <Tooltip
-                  title={
-                    <Typography
-                      level="body-xs"
-                      sx={{
-                        whiteSpace: 'pre-wrap',
-                        fontFamily: 'monospace',
-                        maxWidth: 400,
-                      }}
-                    >
-                      {formatProviderLaunchResult(
-                        job.job_data.provider_launch_result,
-                      )}
-                    </Typography>
-                  }
-                  arrow
-                  placement="top"
-                  variant="soft"
-                  sx={{ maxWidth: 400 }}
-                >
-                  <IconButton
-                    size="sm"
-                    variant="plain"
-                    color="neutral"
-                    sx={{ minHeight: 'unset', p: 0.5 }}
-                  >
-                    <Info size={16} color="var(--joy-palette-neutral-500)" />
-                  </IconButton>
-                </Tooltip>
+            {showCircularLaunchProgress && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap={0.5}
+                sx={{ flexShrink: 0 }}
+              >
+                <CircularProgress
+                  determinate
+                  value={clampedLaunchPercent}
+                  size="sm"
+                  thickness={3}
+                />
+                <Typography level="body-xs" fontWeight="md">
+                  {Math.round(clampedLaunchPercent)}%
+                </Typography>
+              </Stack>
+            )}
+            <IconButton
+              color="danger"
+              onClick={handleStopJob}
+              disabled={stopping}
+            >
+              {stopping ? (
+                <CircularProgress size="sm" thickness={2} />
+              ) : (
+                <StopCircleIcon size="20px" />
               )}
-            <IconButton color="danger" onClick={handleStopJob}>
-              <StopCircleIcon size="20px" />
             </IconButton>
+            {stopping && (
+              <Typography level="body-xs" color="warning">
+                Stopping&hellip;
+              </Typography>
+            )}
           </Stack>
+          {(effectiveLaunchProgress?.message ||
+            effectiveLaunchProgress?.percent != null) && (
+            <Stack
+              direction="column"
+              sx={{ width: '100%', mt: 0.5 }}
+              spacing={0.5}
+            >
+              {effectiveLaunchProgress?.message && (
+                <Typography level="body-sm" textColor="neutral.600">
+                  {effectiveLaunchProgress.message}
+                </Typography>
+              )}
+              {effectiveLaunchProgress?.percent != null && (
+                <LinearProgress
+                  determinate
+                  value={Math.min(
+                    100,
+                    Math.max(0, effectiveLaunchProgress.percent),
+                  )}
+                  sx={{ maxWidth: 240, height: 6, borderRadius: 'sm' }}
+                />
+              )}
+            </Stack>
+          )}
           {job?.job_data?.start_time && (
             <>
               Started:{' '}
@@ -255,7 +251,7 @@ export default function JobProgress({
           )}
           {renderLiveStatusSubtitle()}
         </>
-      ) : job?.status === 'RUNNING' || job?.status === 'LAUNCHING' ? (
+      ) : job?.status === 'RUNNING' ? (
         <>
           <Stack direction="row" alignItems="center" gap={1}>
             <Chip
@@ -293,9 +289,22 @@ export default function JobProgress({
               }
               sx={{ my: 1 }}
             />
-            <IconButton color="danger" onClick={handleStopJob}>
-              <StopCircleIcon size="20px" />
+            <IconButton
+              color="danger"
+              onClick={handleStopJob}
+              disabled={stopping}
+            >
+              {stopping ? (
+                <CircularProgress size="sm" thickness={2} />
+              ) : (
+                <StopCircleIcon size="20px" />
+              )}
             </IconButton>
+            {stopping && (
+              <Typography level="body-xs" color="warning">
+                Stopping&hellip;
+              </Typography>
+            )}
           </Stack>
           {renderLiveStatusSubtitle()}
           {/* Add smaller sweep subprogress bar when job.progress is -1 */}
@@ -395,6 +404,21 @@ export default function JobProgress({
                 /* If we don't have a status, assume it failed */
                 <Typography level="body-sm" color="neutral" />
               ))}
+            {job?.status === 'FAILED' && job?.job_data?.error_msg && (
+              <Typography
+                level="body-sm"
+                color="danger"
+                sx={{
+                  maxWidth: 400,
+                  maxHeight: 80,
+                  overflow: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                Error: {job.job_data.error_msg}
+              </Typography>
+            )}
           </>
         </Stack>
       )}

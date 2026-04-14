@@ -3,6 +3,7 @@
 import asyncio
 import requests
 import os
+import re
 from typing import Dict, Any, Optional, Union, List
 from lab import storage
 from .base import ComputeProvider
@@ -58,6 +59,34 @@ class SLURMProvider(ComputeProvider):
             raise ValueError("REST mode requires rest_url")
         if mode == "ssh" and not ssh_host:
             raise ValueError("SSH mode requires ssh_host")
+
+    @staticmethod
+    def _has_task_allocation_flags(raw_flags: Optional[str]) -> bool:
+        """Check if custom SBATCH flags already configure task layout."""
+        if not raw_flags:
+            return False
+        normalized = " ".join(line.strip() for line in raw_flags.splitlines() if line.strip())
+        task_flag_patterns = [
+            r"(?:^|\s)--ntasks(?:\s+|=|$)",
+            r"(?:^|\s)--ntasks-per-node(?:\s+|=|$)",
+            r"(?:^|\s)-n(?:\s+|=|$)",
+        ]
+        return any(re.search(pattern, normalized) for pattern in task_flag_patterns)
+
+    def _build_distributed_env_setup(self, num_nodes: Optional[int]) -> str:
+        """Build shell exports that normalize distributed env vars across launchers."""
+        if not num_nodes or num_nodes <= 1:
+            return ""
+
+        return (
+            "\n# Distributed multi-node defaults\n"
+            'export MASTER_ADDR="${MASTER_ADDR:-$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n 1)}"\n'
+            'export MASTER_PORT="${MASTER_PORT:-$((10000 + ${SLURM_JOB_ID:-0} % 50000))}"\n'
+            'export NODE_RANK="${NODE_RANK:-${SLURM_NODEID:-0}}"\n'
+            'export RANK="${RANK:-${SLURM_PROCID:-$NODE_RANK}}"\n'
+            'export LOCAL_RANK="${LOCAL_RANK:-${SLURM_LOCALID:-0}}"\n'
+            f'export WORLD_SIZE="${{WORLD_SIZE:-${{SLURM_NTASKS:-{num_nodes}}}}}"\n'
+        )
 
     def _ssh_execute(self, command: str) -> str:
         """Execute command via SSH."""
@@ -210,7 +239,7 @@ class SLURMProvider(ComputeProvider):
         Launch a cluster by submitting a job (similar to submit_job).
 
         For SLURM, "launching" means submitting the job since clusters are pre-configured.
-        This creates a SLURM script with setup, env vars, and command, then submits it.
+        This creates a SLURM script with setup, env vars, and run command, then submits it.
         """
         # If in SSH mode, resolve any file mounts by uploading local paths to remote.
         # Mapping semantics: {remote_path: local_path}
@@ -251,6 +280,37 @@ class SLURMProvider(ComputeProvider):
         if config.num_nodes and config.num_nodes > 1:
             script_content += f"#SBATCH --nodes={config.num_nodes}\n"
 
+        # Append any custom SBATCH flags:
+        # - Persistent per-user/per-provider defaults from extra_config["user_sbatch_flags"]
+        # - Optional per-run overrides from config.provider_config["custom_sbatch_flags"]
+        user_flags = self.extra_config.get("user_sbatch_flags") if self.extra_config else None
+
+        run_flags = None
+        if config.provider_config:
+            raw_run_flags = config.provider_config.get("custom_sbatch_flags")
+            if isinstance(raw_run_flags, str) and raw_run_flags.strip():
+                run_flags = raw_run_flags
+
+        # If per-run flags are provided, treat them as the full set for this job
+        # (they override the user defaults). Otherwise, fall back to the user defaults.
+        effective_flags = run_flags if run_flags else user_flags
+
+        if isinstance(effective_flags, str) and effective_flags.strip():
+            for line in effective_flags.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("#SBATCH"):
+                    script_content += f"{stripped}\n"
+                else:
+                    script_content += f"#SBATCH {stripped}\n"
+
+        # For multinode jobs, ensure at least one task per node if user did not
+        # explicitly provide their own task layout flags.
+        if config.num_nodes and config.num_nodes > 1 and not self._has_task_allocation_flags(effective_flags):
+            script_content += f"#SBATCH --ntasks={config.num_nodes}\n"
+            script_content += "#SBATCH --ntasks-per-node=1\n"
+
         # Add setup commands if provided
         if config.setup:
             script_content += f"\n# Setup commands\n{config.setup}\n"
@@ -258,15 +318,18 @@ class SLURMProvider(ComputeProvider):
         # Add environment variables
         for key, value in config.env_vars.items():
             script_content += f"export {key}={value}\n"
+        script_content += self._build_distributed_env_setup(config.num_nodes)
 
-        # Add the main command
-        if config.command:
-            script_content += f"\n# Main command\n{config.command}\n"
+        # Add the main run command
+        if config.run:
+            script_content += f"\n# Main run command\n{config.run}\n"
 
         if self.mode == "ssh":
             # Write script to remote and submit
             script_name = f"/tmp/cluster_{cluster_name}.sh"
             # Create script using heredoc and submit
+            # Print the contents of the sbatch script to the console
+            print(f"DEBUG: SLURMProvider.launch_cluster: sbatch script contents: {script_content}")
             command = f'cat > {script_name} << "EOFSLURM"\n{script_content}\nEOFSLURM\nsbatch {script_name}'
             output = self._ssh_execute(command)
             # Parse job ID from output: "Submitted batch job 12345"
@@ -733,11 +796,28 @@ class SLURMProvider(ComputeProvider):
         if job_config.timeout:
             script_content += f"#SBATCH --time={job_config.timeout}\n"
 
+        # Append any user-specific custom SBATCH flags from extra_config
+        user_flags = self.extra_config.get("user_sbatch_flags") if self.extra_config else None
+        if isinstance(user_flags, str) and user_flags.strip():
+            for line in user_flags.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("#SBATCH"):
+                    script_content += f"{stripped}\n"
+                else:
+                    script_content += f"#SBATCH {stripped}\n"
+
+        if job_config.num_nodes and job_config.num_nodes > 1 and not self._has_task_allocation_flags(user_flags):
+            script_content += f"#SBATCH --ntasks={job_config.num_nodes}\n"
+            script_content += "#SBATCH --ntasks-per-node=1\n"
+
         # Add environment variables
         for key, value in job_config.env_vars.items():
             script_content += f"export {key}={value}\n"
+        script_content += self._build_distributed_env_setup(job_config.num_nodes)
 
-        script_content += f"\n{job_config.command}\n"
+        script_content += f"\n{job_config.run}\n"
 
         if self.mode == "ssh":
             # Write script to remote and submit

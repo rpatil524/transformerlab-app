@@ -74,7 +74,7 @@ async def get_interactive_gallery():
     """
     Get the interactive tasks gallery.
     This contains templates for interactive task types (vscode, jupyter, vllm, ssh).
-    Resolution is by environment (local/remote) only; see resolve_interactive_command.
+    Task run/setup resolve from task.yaml; gallery metadata augments for tunnels; see resolve_interactive_command.
     """
     return await get_gallery_file(INTERACTIVE_GALLERY_FILE)
 
@@ -251,8 +251,11 @@ async def update_gallery_cache_file(filename: str):
 
 async def update_cache_from_remote(gallery_filename: str):
     """
-    Fetches a gallery file from source and updates the cache
+    Fetches a gallery file from source and updates the cache.
+    Set TLAB_USE_LOCAL_GALLERIES=1 to skip remote fetching and use the local fallback only.
     """
+    if os.environ.get("TLAB_USE_LOCAL_GALLERIES", "").strip() in ("1", "true", "yes"):
+        return
     try:
         remote_gallery = TLAB_REMOTE_GALLERIES_URL + gallery_filename
         local_cache_filename = await gallery_cache_file_path(gallery_filename)
@@ -272,6 +275,18 @@ async def update_cache_from_remote(gallery_filename: str):
 async def get_gallery_file(filename: str):
     # default empty gallery returned in case of failed gallery file open
     gallery = []
+
+    # When developing locally, prefer the in-repo gallery file over the cached copy.
+    local_galleries_flag = os.environ.get("TLAB_USE_LOCAL_GALLERIES", "").strip()
+    if local_galleries_flag in ("1", "true", "yes"):
+        local_path = os.path.join(dirs.GALLERIES_LOCAL_FALLBACK_DIR, filename)
+        # print(f"[galleries] TLAB_USE_LOCAL_GALLERIES={local_galleries_flag}, local_path={local_path}, exists={os.path.isfile(local_path)}")
+        if os.path.isfile(local_path):
+            with open(local_path, "r") as f:
+                gallery = json.load(f)
+            # print(f"[galleries] Loaded {filename} from local: {len(gallery)} entries")
+            return gallery
+
     gallery_path = await gallery_cache_file_path(filename)
 
     # Check for the cached file. If it's not there then initialize.

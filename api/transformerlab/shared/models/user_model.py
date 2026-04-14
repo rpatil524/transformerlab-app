@@ -1,21 +1,17 @@
 # database.py
 from typing import AsyncGenerator, Optional
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi import Depends
+import asyncio
 from os import getenv
 import uuid
 
-from transformerlab.db.constants import DATABASE_URL, DATABASE_TYPE
+from transformerlab.db.constants import DATABASE_TYPE
+from transformerlab.db.session import async_session as AsyncSessionLocal
 from transformerlab.shared.models.models import Team, User, OAuthAccount
 from transformerlab.shared.remote_workspace import create_bucket_for_team
-
-
-# 3. Setup the Async Engine and Session
-engine = create_async_engine(DATABASE_URL)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # 5. Database session dependency
@@ -135,7 +131,7 @@ async def create_personal_team(session: AsyncSession, user) -> Team:
     remote_storage_enabled = getenv("TFL_REMOTE_STORAGE_ENABLED", "false").lower() == "true"
     if remote_storage_enabled or (getenv("TFL_STORAGE_PROVIDER") == "localfs" and getenv("TFL_STORAGE_URI")):
         try:
-            create_bucket_for_team(team.id, profile_name="transformerlab-s3")
+            await asyncio.to_thread(create_bucket_for_team, team.id, "transformerlab-s3")
         except Exception as e:
             # Log error but don't fail team creation if storage creation fails
             print(f"Warning: Failed to create storage for team {team.id}: {e}")

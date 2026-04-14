@@ -98,7 +98,7 @@ class SkyPilotProvider(ComputeProvider):
         server_url: str,
         api_token: Optional[str] = None,
         default_env_vars: Optional[Dict[str, str]] = None,
-        default_entrypoint_command: Optional[str] = None,
+        default_entrypoint_run: Optional[str] = None,
         extra_config: Optional[Dict[str, Any]] = None,
     ):
         """
@@ -108,13 +108,13 @@ class SkyPilotProvider(ComputeProvider):
             server_url: Base URL of the SkyPilot server
             api_token: Optional API token for authentication
             default_env_vars: Default environment variables to include in requests
-            default_entrypoint_command: Default entrypoint command
+            default_entrypoint_run: Default run command for clusters/jobs
             extra_config: Additional provider-specific configuration
         """
         self.server_url = server_url.rstrip("/")
         self.api_token = api_token
         self.default_env_vars = default_env_vars or {}
-        self.default_entrypoint_command = default_entrypoint_command
+        self.default_entrypoint_run = default_entrypoint_run
         self.extra_config = extra_config or {}
 
         # Store server_common reference if available
@@ -132,6 +132,25 @@ class SkyPilotProvider(ComputeProvider):
                 error_msg += "\nThis may indicate a mismatch between CLI and Python package installations."
                 error_msg += "\nTry: pip install --upgrade skypilot"
             raise ImportError(error_msg)
+
+    def _prepend_distributed_env_setup(self, run_command: Optional[str], num_nodes: Optional[int]) -> Optional[str]:
+        """Prepend a portable distributed env bootstrap for multi-node jobs."""
+        if not run_command:
+            return run_command
+        if not num_nodes or num_nodes <= 1:
+            return run_command
+
+        distributed_env_setup = "; ".join(
+            [
+                'export MASTER_ADDR="${MASTER_ADDR:-$(echo "$SKYPILOT_NODE_IPS" | head -n1)}"',
+                'export MASTER_PORT="${MASTER_PORT:-29500}"',
+                'export NODE_RANK="${NODE_RANK:-${SKYPILOT_NODE_RANK:-0}}"',
+                'export RANK="${RANK:-$NODE_RANK}"',
+                'export LOCAL_RANK="${LOCAL_RANK:-0}"',
+                'export WORLD_SIZE="${WORLD_SIZE:-$(( ${SKYPILOT_NUM_NODES:-1} * ${SKYPILOT_NUM_GPUS_PER_NODE:-1} ))}"',
+            ]
+        )
+        return f"{distributed_env_setup};{run_command}"
 
     def _make_authenticated_request(
         self,
@@ -299,8 +318,8 @@ class SkyPilotProvider(ComputeProvider):
             task = sky.Task()
 
         # Set run command
-        if config.command:
-            task.run = config.command
+        if config.run:
+            task.run = self._prepend_distributed_env_setup(config.run, config.num_nodes)
 
         # Set setup commands
         if config.setup:
@@ -341,6 +360,8 @@ class SkyPilotProvider(ComputeProvider):
             resources_kwargs["zone"] = config.zone
         if config.use_spot:
             resources_kwargs["use_spot"] = True
+        if config.image_id:
+            resources_kwargs["image_id"] = config.image_id
 
         if resources_kwargs:
             task.set_resources(sky_resources.Resources(**resources_kwargs))
@@ -419,8 +440,8 @@ class SkyPilotProvider(ComputeProvider):
                 body_json["env_vars"].update(self.default_env_vars)
             if config.env_vars:
                 body_json["env_vars"].update(config.env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
 
@@ -430,7 +451,7 @@ class SkyPilotProvider(ComputeProvider):
             response = self._make_authenticated_request("POST", "/launch", json_data=body_json, timeout=5)
         except ConnectionError as e:
             print(f"Failed to launch cluster {cluster_name}: {e}")
-            return {"status": "error", "message": str(e)}
+            raise
 
         # Get request ID using SkyPilot's method (matches SDK exactly)
         if self._server_common:
@@ -465,8 +486,8 @@ class SkyPilotProvider(ComputeProvider):
         # Add default env_vars and entrypoint_command to match API format
         if self.default_env_vars:
             body_json.setdefault("env_vars", {}).update(self.default_env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
 
@@ -475,7 +496,7 @@ class SkyPilotProvider(ComputeProvider):
             response = self._make_authenticated_request("POST", "/down", json_data=body_json, timeout=30)
         except ConnectionError as e:
             print(f"Failed to stop cluster {cluster_name}: {e}")
-            return {"status": "error", "message": str(e)}
+            raise
 
         # Get request ID using SkyPilot's method (matches SDK exactly)
         request_id = None
@@ -546,8 +567,8 @@ class SkyPilotProvider(ComputeProvider):
         # Add default env_vars and entrypoint_command to match API format
         if self.default_env_vars:
             body_json.setdefault("env_vars", {}).update(self.default_env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
         # Use SkyPilot's make_authenticated_request (matches SDK exactly)
@@ -699,10 +720,14 @@ class SkyPilotProvider(ComputeProvider):
         else:
             state_str = "UNKNOWN"
 
-        try:
-            state = ClusterState[state_str]
-        except KeyError:
-            state = ClusterState.UNKNOWN
+        # Map SkyPilot's FAILED_SETUP directly to our FAILED state
+        if state_str == "FAILED_SETUP":
+            state = ClusterState.FAILED
+        else:
+            try:
+                state = ClusterState[state_str]
+            except KeyError:
+                state = ClusterState.UNKNOWN
 
         return ClusterStatus(
             cluster_name=cluster_name,
@@ -741,8 +766,8 @@ class SkyPilotProvider(ComputeProvider):
         # Add default env_vars and entrypoint_command to match API format
         if self.default_env_vars:
             body_json.setdefault("env_vars", {}).update(self.default_env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
 
@@ -851,10 +876,14 @@ class SkyPilotProvider(ComputeProvider):
             else:
                 state_str = "UNKNOWN"
 
-            try:
-                state = ClusterState[state_str]
-            except KeyError:
-                state = ClusterState.UNKNOWN
+            # Map SkyPilot's FAILED_SETUP directly to our FAILED state
+            if state_str == "FAILED_SETUP":
+                state = ClusterState.FAILED
+            else:
+                try:
+                    state = ClusterState[state_str]
+                except KeyError:
+                    state = ClusterState.UNKNOWN
 
             cluster_statuses.append(
                 ClusterStatus(
@@ -959,7 +988,7 @@ class SkyPilotProvider(ComputeProvider):
         """Submit a job to an existing cluster."""
         # Build sky.Task object from JobConfig
         task = sky.Task()
-        task.run = job_config.command
+        task.run = self._prepend_distributed_env_setup(job_config.run, job_config.num_nodes)
 
         # Set num_nodes if specified
         if job_config.num_nodes and job_config.num_nodes > 1:
@@ -1027,8 +1056,8 @@ class SkyPilotProvider(ComputeProvider):
         # Add default env_vars and entrypoint_command to match API format
         if self.default_env_vars:
             body_json.setdefault("env_vars", {}).update(self.default_env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
 
@@ -1037,7 +1066,7 @@ class SkyPilotProvider(ComputeProvider):
             response = self._make_authenticated_request("POST", "/exec", json_data=body_json, timeout=5)
         except ConnectionError as e:
             print(f"Failed to exec on cluster {cluster_name}: {e}")
-            return {"status": "error", "message": str(e)}
+            raise
 
         # Get request ID using SkyPilot's method (matches SDK exactly)
         if self._server_common:
@@ -1082,8 +1111,8 @@ class SkyPilotProvider(ComputeProvider):
         # Add default env_vars and entrypoint_command to match API format
         if self.default_env_vars:
             body_json.setdefault("env_vars", {}).update(self.default_env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
 
@@ -1155,6 +1184,40 @@ class SkyPilotProvider(ComputeProvider):
                 print(f"Error reading logs: {str(e)}")
                 return "Error reading logs"
 
+    def get_request_logs(
+        self,
+        request_id: str,
+        tail_lines: Optional[int] = None,
+    ) -> str:
+        """Get logs for a SkyPilot API server request by its request ID."""
+        params = f"request_id={request_id}&format=plain"
+        if tail_lines:
+            params += f"&tail={tail_lines}"
+
+        try:
+            from sky.client import common as client_common
+
+            timeout = (
+                getattr(client_common, "API_SERVER_REQUEST_CONNECTION_TIMEOUT_SECONDS", 5),
+                None,
+            )
+        except (ImportError, AttributeError):
+            timeout = (5, None)
+
+        try:
+            response = self._make_authenticated_request("GET", f"/api/stream?{params}", json_data=None, timeout=timeout)
+        except ConnectionError as e:
+            return f"Failed to fetch request logs: {e}"
+
+        try:
+            if hasattr(response, "text"):
+                return response.text
+            elif hasattr(response, "content"):
+                return response.content.decode("utf-8")
+            return ""
+        except Exception as e:
+            return f"Error reading request logs: {e}"
+
     def cancel_job(self, cluster_name: str, job_id: Union[str, int]) -> Dict[str, Any]:
         """Cancel a job."""
         # Convert job_id to int if it's a string
@@ -1175,8 +1238,8 @@ class SkyPilotProvider(ComputeProvider):
         # Add default env_vars and entrypoint_command to match API format
         if self.default_env_vars:
             body_json.setdefault("env_vars", {}).update(self.default_env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
 
@@ -1185,7 +1248,7 @@ class SkyPilotProvider(ComputeProvider):
             response = self._make_authenticated_request("POST", "/cancel", json_data=body_json, timeout=5)
         except ConnectionError as e:
             print(f"Failed to cancel job on cluster {cluster_name}: {e}")
-            return {"status": "error", "message": str(e)}
+            raise
 
         # Get request ID using SkyPilot's method (matches SDK exactly)
         if self._server_common:
@@ -1220,8 +1283,8 @@ class SkyPilotProvider(ComputeProvider):
         # Add default env_vars and entrypoint_command to match API format
         if self.default_env_vars:
             body_json.setdefault("env_vars", {}).update(self.default_env_vars)
-        if self.default_entrypoint_command:
-            body_json.setdefault("entrypoint_command", self.default_entrypoint_command)
+        if self.default_entrypoint_run:
+            body_json.setdefault("entrypoint_command", self.default_entrypoint_run)
         body_json.setdefault("using_remote_api_server", False)
         body_json.setdefault("override_skypilot_config", {})
 

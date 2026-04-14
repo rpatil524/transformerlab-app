@@ -1,3 +1,4 @@
+import os
 import json
 from typing import Any
 from urllib.parse import urlparse
@@ -26,10 +27,11 @@ def load_config() -> dict[str, Any]:
     if cached_config is not None:
         return cached_config
 
-    if not CONFIG_FILE.exists():
+    if not os.path.exists(CONFIG_FILE):
         return {}
     try:
-        cached_config = json.loads(CONFIG_FILE.read_text())
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            cached_config = json.loads(f.read())
         return cached_config
     except (json.JSONDecodeError, OSError):
         return {}
@@ -39,30 +41,32 @@ def _save_config(config: dict[str, Any]) -> bool:
     """Save config to file. Returns True on success."""
     global cached_config
     try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(config, indent=2))
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(json.dumps(config, indent=2))
         cached_config = config
         return True
     except OSError as e:
-        # THEME: [red] -> [error]
         console.print(f"[error]Error:[/error] Failed to save config: {e}")
         return False
 
 
-def list_config() -> None:
+def list_config(output_format: str = "pretty") -> None:
     """Display all config values in a table."""
     config = load_config()
 
     if not config:
-        # THEME: [yellow] -> [warning]
-        console.print("[warning]No configuration values set[/warning]")
+        if output_format == "json":
+            print(json.dumps([]))
+        else:
+            console.print("[warning]No configuration values set[/warning]")
         return
 
     json_with_key_value = [{"Key": k, "Value": str(v)} for k, v in sorted(config.items())]
 
     render_table(
         data=json_with_key_value,
-        format_type="pretty",
+        format_type=output_format,
         table_columns=["Key", "Value"],
         title=None,
     )
@@ -84,30 +88,42 @@ def _validate_url(url: str) -> str | None:
             return None
         normalized = url.rstrip("/")
         return normalized
-    except Exception:
+    except ValueError:
         return None
 
 
-def set_config(key: str, value: str) -> bool:
+def set_config(key: str, value: str, output_format: str = "pretty") -> bool:
     """Set a config value. Returns True on success."""
     if not key:
-        console.print("[error]Error:[/error] Key cannot be empty")
+        if output_format == "json":
+            print(json.dumps({"error": "Key cannot be empty"}))
+        else:
+            console.print("[error]Error:[/error] Key cannot be empty")
         return False
     if not value:
-        console.print("[error]Error:[/error] Value cannot be empty")
+        if output_format == "json":
+            print(json.dumps({"error": "Value cannot be empty"}))
+        else:
+            console.print("[error]Error:[/error] Value cannot be empty")
         return False
 
     if key not in VALID_CONFIG_KEYS:
         keys_list = ", ".join(VALID_CONFIG_KEYS)
-        console.print(f"[error]Error:[/error] Invalid config key '{key}'")
-        console.print(f"[warning]Valid keys:[/warning] {keys_list}")
+        if output_format == "json":
+            print(json.dumps({"error": f"Invalid config key '{key}'", "valid_keys": VALID_CONFIG_KEYS}))
+        else:
+            console.print(f"[error]Error:[/error] Invalid config key '{key}'")
+            console.print(f"[warning]Valid keys:[/warning] {keys_list}")
         return False
 
     if key == "server":
         normalized_url = _validate_url(value)
         if normalized_url is None:
-            console.print(f"[error]Error:[/error] Invalid URL '{value}'")
-            console.print("[warning]URL must start with http:// or https://[/warning]")
+            if output_format == "json":
+                print(json.dumps({"error": f"Invalid URL '{value}'"}))
+            else:
+                console.print(f"[error]Error:[/error] Invalid URL '{value}'")
+                console.print("[warning]URL must start with http:// or https://[/warning]")
             return False
         value = normalized_url
 
@@ -115,8 +131,10 @@ def set_config(key: str, value: str) -> bool:
     config[key] = value
 
     if _save_config(config):
-        # THEME: [green] -> [success], [cyan] -> [label], [green] -> [value]
-        console.print(f"[success]✓[/success] Set [label]{key}[/label] = [value]{value}[/value]")
+        if output_format == "json":
+            print(json.dumps({"key": key, "value": value}))
+        else:
+            console.print(f"[success]✓[/success] Set [label]{key}[/label] = [value]{value}[/value]")
         return True
     return False
 
@@ -126,14 +144,12 @@ def delete_config(key: str) -> bool:
     config = load_config()
 
     if key not in config:
-        # THEME: [yellow] -> [warning]
         console.print(f"[warning]Key '{key}' not found[/warning]")
         return False
 
     del config[key]
 
     if _save_config(config):
-        # THEME: [green] -> [success], [cyan] -> [label]
         console.print(f"[success]✓[/success] Deleted [label]{key}[/label]")
         return True
     return False
@@ -144,10 +160,13 @@ def check_configs(output_format: str = "pretty") -> None:
     config = load_config()
     missing_keys = [key for key in REQUIRED_CONFIG_KEYS if key not in config]
     if missing_keys:
-        console.print(
-            "[warning]Warning:[/warning] The following configuration keys are missing: " + ", ".join(missing_keys)
-        )
-        console.print("Use the 'lab config' command to set them.")
+        if output_format == "json":
+            print(json.dumps({"error": "Missing required configuration keys: " + ", ".join(missing_keys)}))
+        else:
+            console.print(
+                "[warning]Warning:[/warning] The following configuration keys are missing: " + ", ".join(missing_keys)
+            )
+            console.print("Use the 'lab config' command to set them.")
         raise typer.Exit(1)
 
     set_base_url(config.get("server"))
@@ -163,11 +182,8 @@ def check_configs(output_format: str = "pretty") -> None:
     server = config.get("server", "N/A")
     experiment = config.get("current_experiment", "N/A")
 
-    # THEME: Use "header" for table headers
     table = Table(show_header=True, header_style="header", box=None, title_justify="left")
 
-    # THEME: Use "value" for the actual data columns (previously cyan)
-    # This keeps it consistent with 'whoami' where values are green (or whatever 'value' is mapped to)
     table.add_column("User Email", style="value")
     table.add_column("Team ID", style="value")
     table.add_column("Server", style="value")
@@ -184,3 +200,18 @@ def get_current_experiment() -> str | None:
     """Get the current experiment ID from config."""
     config = load_config()
     return config.get("current_experiment", "alpha")
+
+
+def require_current_experiment() -> str:
+    """Get the current experiment ID from config, or exit with a helpful message."""
+    from transformerlab_cli.state import cli_state
+
+    check_configs(output_format=cli_state.output_format)
+    current_experiment = get_config("current_experiment")
+    if not current_experiment or not str(current_experiment).strip():
+        console.print(
+            "[warning]current_experiment is not set in config. Set it with:[/warning]"
+            " [bold]lab config set current_experiment <experiment_name>[/bold]"
+        )
+        raise typer.Exit(1)
+    return str(current_experiment)

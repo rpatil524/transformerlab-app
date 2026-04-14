@@ -325,6 +325,7 @@ class RunpodProvider(ComputeProvider):
             "RUNNING": ClusterState.UP,
             "STOPPED": ClusterState.STOPPED,
             "TERMINATED": ClusterState.DOWN,
+            "TERMINATING": ClusterState.STOPPED,  # Pod is shutting down; treat as STOPPED for status worker
             "CREATING": ClusterState.INIT,
             "FAILED": ClusterState.FAILED,
             "RESTARTING": ClusterState.INIT,
@@ -353,14 +354,14 @@ class RunpodProvider(ComputeProvider):
                     gpu_count = 1
 
             # Use GPU-enabled image
-            default_image = "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"
+            default_image = "runpod/pytorch:1.0.3-cu1281-torch290-ubuntu2204"
         else:
             # CPU pod
             compute_type = "CPU"
             gpu_type_id = None
             gpu_count = None
-            # Use basic CPU image
-            default_image = "ubuntu:22.04"
+            # Use the RunPod base CPU image for CPU-only launches
+            default_image = "runpod/base:1.0.2-ubuntu2204"
 
         # Get image name from config or use default
         image_name = config.provider_config.get("template_id") or self.default_template_id or default_image
@@ -379,24 +380,15 @@ class RunpodProvider(ComputeProvider):
 
         # Add CPU-specific fields if CPU pod
         elif compute_type == "CPU":
-            # Set default CPU resources if not specified
-            pod_data["vcpuCount"] = config.cpus or 2
-            if config.memory:
-                # Convert memory to GB if specified as string with units
+            # Set default CPU resources if not specified.
+            # RunPod expects an integer for vcpuCount.
+            vcpu_count = 2
+            if config.cpus is not None:
                 try:
-                    if isinstance(config.memory, str):
-                        # Parse memory string like "4GB" or "4096"
-                        if config.memory.upper().endswith("GB"):
-                            memory_gb = float(config.memory[:-2])
-                        elif config.memory.upper().endswith("MB"):
-                            memory_gb = float(config.memory[:-2]) / 1024
-                        else:
-                            memory_gb = float(config.memory)
-                    else:
-                        memory_gb = float(config.memory)
-                    pod_data["memoryInGb"] = memory_gb
-                except (ValueError, TypeError):
-                    pass  # Use default if parsing fails
+                    vcpu_count = int(config.cpus)
+                except (TypeError, ValueError):
+                    vcpu_count = 2
+            pod_data["vcpuCount"] = vcpu_count
         if config.disk_size:
             pod_data["volumeInGb"] = config.disk_size
         elif self.extra_config.get("default_volume_gb"):
@@ -416,7 +408,7 @@ class RunpodProvider(ComputeProvider):
         # Expose SSH so we can later read run_logs.txt for provider logs
         pod_data["ports"] = ["22/tcp"]
 
-        # Build dockerStartCmd - Runpod expects a single command string or array
+        # Build dockerStartCmd - Runpod expects a single run command string or array
         # that will be executed by the container's entrypoint.
         # We tee stdout/stderr to RUNPOD_RUN_LOGS_PATH so provider logs can be read via SSH.
         docker_cmds = []
@@ -425,9 +417,9 @@ class RunpodProvider(ComputeProvider):
             # Setup commands should run first
             docker_cmds.append(config.setup)
 
-        if config.command:
-            # Main command to execute
-            docker_cmds.append(config.command)
+        if config.run:
+            # Main run command to execute
+            docker_cmds.append(config.run)
 
         # Join commands with && so they run sequentially
         # Tee to a fixed path so get_job_logs can read it via SSH (no RunPod logs API)
@@ -442,8 +434,8 @@ class RunpodProvider(ComputeProvider):
             # For setup-only, still keep container running
             wrapped_cmd = f"({config.setup}); runpodctl remove pod $RUNPOD_POD_ID"
             pod_data["dockerStartCmd"] = ["sh", "-c", wrapped_cmd]
-        elif config.command:
-            wrapped_cmd = f"mkdir -p /workspace && (({config.command}) 2>&1 | tee {RUNPOD_RUN_LOGS_PATH}); runpodctl remove pod $RUNPOD_POD_ID"
+        elif config.run:
+            wrapped_cmd = f"mkdir -p /workspace && (({config.run}) 2>&1 | tee {RUNPOD_RUN_LOGS_PATH}); runpodctl remove pod $RUNPOD_POD_ID"
             pod_data["dockerStartCmd"] = ["sh", "-c", wrapped_cmd]
 
         if self.default_region or config.region:
@@ -492,9 +484,26 @@ class RunpodProvider(ComputeProvider):
             }
 
         try:
-            # Terminate the pod
+            # Terminate the pod. RunPod documents 204 No Content on success (no body).
+            # https://docs.runpod.io/api-reference/pods/DELETE/pods/podId
             response = self._make_request("DELETE", f"/pods/{pod_id}")
-            result = response.json()
+            status = response.status_code
+            result: Optional[Any] = None
+
+            if status == 204:
+                result = None
+            elif 200 <= status < 300:
+                if response.content:
+                    try:
+                        result = response.json()
+                    except requests.exceptions.JSONDecodeError:
+                        if response.text:
+                            result = {"raw_response": response.text}
+            else:
+                # Should not occur: _make_request uses raise_for_status() (non-2xx raise before here).
+                raise RuntimeError(
+                    f"Unexpected HTTP status from RunPod delete pod: {status} (expected 2xx, typically 204)"
+                )
 
             # Remove from cache
             if cluster_name in self._cluster_name_to_pod_id:

@@ -28,6 +28,7 @@ import {
   ListItemDecorator,
   Stack,
   Skeleton, // added Skeleton import
+  Alert,
 } from '@mui/joy';
 
 import {
@@ -37,11 +38,10 @@ import {
   FileUpIcon,
   FolderIcon,
   PlusCircleIcon,
-  RotateCcwIcon,
   SearchIcon,
   FilterIcon as FilterAltIcon,
   MoreVerticalIcon as MoreHorizRoundedIcon,
-  LinkIcon,
+  XIcon,
 } from 'lucide-react';
 
 import {
@@ -57,9 +57,11 @@ import {
   FaRegFilePdf,
   LuFileJson,
 } from 'renderer/components/Icons';
-import TinyButton from 'renderer/components/Shared/TinyButton';
 import * as chatAPI from '../../../lib/transformerlab-api-sdk';
 import { useExperimentInfo } from 'renderer/lib/ExperimentInfoContext';
+
+const hasDisplayableSize = (size: unknown): size is number =>
+  typeof size === 'number' && Number.isFinite(size) && size > 0;
 
 function RowMenu({ experimentInfo, filename, foldername, mutate, row }) {
   return (
@@ -71,7 +73,9 @@ function RowMenu({ experimentInfo, filename, foldername, mutate, row }) {
         <MoreHorizRoundedIcon size="16px" />
       </MenuButton>
       <Menu size="sm" sx={{ minWidth: 140 }}>
-        <MenuItem disabled>Size: {formatBytes(row?.size)}</MenuItem>
+        <MenuItem disabled>
+          Size: {hasDisplayableSize(row?.size) ? formatBytes(row.size) : '--'}
+        </MenuItem>
         {/* <MenuItem disabled>Rename</MenuItem> */}
         <Divider />
         <MenuItem
@@ -112,8 +116,7 @@ function File({
   experimentInfo,
   currentFolder,
   mutate,
-  setPreviewFile,
-  isLocalMode = true,
+  onPreviewClick,
 }) {
   return (
     <tr key={row?.name}>
@@ -129,7 +132,7 @@ function File({
       {fullPage && (
         <>
           <td>
-            <Typography level="body-xs">{row?.date}</Typography>
+            <Typography level="body-xs">{row?.date || '--'}</Typography>
           </td>
           <td>
             <Chip
@@ -154,11 +157,9 @@ function File({
             </Chip>
           </td>
           <td>
-            {row?.size && (
-              <Typography level="body-xs" color="neutral">
-                {formatBytes(row?.size)}
-              </Typography>
-            )}
+            <Typography level="body-xs" color="neutral">
+              {hasDisplayableSize(row?.size) ? formatBytes(row.size) : '--'}
+            </Typography>
           </td>
         </>
       )}
@@ -175,13 +176,8 @@ function File({
             variant="plain"
             size="sm"
             style={{ fontSize: '11px' }}
-            disabled={!isLocalMode}
-            title={
-              !isLocalMode ? 'Preview not available in remote mode' : undefined
-            }
-            onClick={() => {
-              if (isLocalMode) setPreviewFile(row?.name);
-            }}
+            onClick={() => onPreviewClick(row?.name)}
+            title="Preview document"
           >
             <EyeIcon size="16px" />
           </Button>
@@ -220,7 +216,7 @@ function Folder({
       {fullPage && (
         <>
           <td>
-            <Typography level="body-xs">{row?.date}</Typography>
+            <Typography level="body-xs">{row?.date || '--'}</Typography>
           </td>
           <td>
             <Chip
@@ -245,16 +241,9 @@ function Folder({
             </Chip>
           </td>
           <td>
-            {row?.size == 0 ? (
-              <></>
-            ) : (
-              row?.size &&
-              row?.size != 0 && (
-                <Typography level="body-xs" color="neutral">
-                  {formatBytes(row?.size)}
-                </Typography>
-              )
-            )}
+            <Typography level="body-xs" color="neutral">
+              {hasDisplayableSize(row?.size) ? formatBytes(row.size) : '--'}
+            </Typography>
           </td>
         </>
       )}
@@ -325,13 +314,8 @@ function stableSort<T>(
 
 type Order = 'asc' | 'desc';
 
-export default function Documents({
-  fullPage = false,
-  additionalMessage = false,
-  fixedFolder = '',
-}) {
+export default function Documents({ fullPage = false, fixedFolder = '' }) {
   const { experimentInfo } = useExperimentInfo();
-  const isLocalMode = window?.platform?.multiuser !== true;
   const [doc, setDoc] = React.useState<Doc>('desc');
   const [open, setOpen] = React.useState(false);
   const [dropzoneActive, setDropzoneActive] = React.useState(false);
@@ -339,32 +323,14 @@ export default function Documents({
   const [previewBlobUrl, setPreviewBlobUrl] = React.useState<string | null>(
     null,
   );
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
   const previewBlobUrlRef = React.useRef<string | null>(null);
   const [showFolderModal, setShowFolderModal] = React.useState(false);
-  const [showWebpageModal, setShowWebpageModal] = React.useState(false);
-  const [webpageUrls, setWebpageUrls] = React.useState(['']);
   const [newFolderName, setNewFolderName] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [currentFolder, setCurrentFolder] = React.useState(fixedFolder);
   const [order, setOrder] = React.useState<Order>('asc');
-
-  const addUrlField = () => {
-    setWebpageUrls([...webpageUrls, '']);
-  };
-
-  const removeUrlField = (index) => {
-    if (webpageUrls.length > 1) {
-      const newUrls = [...webpageUrls];
-      newUrls.splice(index, 1);
-      setWebpageUrls(newUrls);
-    }
-  };
-
-  const updateUrl = (index, value) => {
-    const newUrls = [...webpageUrls];
-    newUrls[index] = value;
-    setWebpageUrls(newUrls);
-  };
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
 
   const {
     data: rows,
@@ -377,6 +343,7 @@ export default function Documents({
   );
 
   const uploadFiles = async (currentFolder, formData) => {
+    setUploadError(null);
     chatAPI
       .authenticatedFetch(
         chatAPI.Endpoints.Documents.Upload(experimentInfo?.id, currentFolder),
@@ -385,11 +352,22 @@ export default function Documents({
           body: formData,
         },
       )
-      .then((response) => {
+      .then(async (response) => {
         if (response.ok) {
           return response.json();
         }
-        throw new Error('File upload failed');
+        // Try to parse error details from response
+        let errorMessage = 'File upload failed';
+        try {
+          const errorData = await response.json();
+          if (errorData.detail) {
+            errorMessage = errorData.detail;
+          }
+        } catch {
+          // If we can't parse JSON, use a generic message
+          errorMessage = `Upload failed: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
       })
       .then((data) => {
         console.log('Server response:', data);
@@ -398,6 +376,8 @@ export default function Documents({
       })
       .catch((error) => {
         console.error('Error uploading file:', error);
+        setLoading(false);
+        setUploadError(error.message || 'An error occurred during upload');
       });
   };
 
@@ -429,6 +409,7 @@ export default function Documents({
       previewBlobUrlRef.current = null;
       setPreviewBlobUrl(null);
     }
+    setPreviewError(null);
 
     if (previewFile && experimentInfo?.id) {
       const fetchDocument = async () => {
@@ -444,12 +425,26 @@ export default function Documents({
             const blobUrl = URL.createObjectURL(blob);
             previewBlobUrlRef.current = blobUrl;
             setPreviewBlobUrl(blobUrl);
+            setPreviewError(null);
           } else {
             console.error('Failed to fetch document:', response.status);
+            let errorMessage = `Failed to load document (HTTP ${response.status})`;
+            try {
+              const errorData = await response.json();
+              if (errorData.detail) {
+                errorMessage = errorData.detail;
+              }
+            } catch {
+              // Use default error message if can't parse JSON
+            }
+            setPreviewError(errorMessage);
             setPreviewBlobUrl(null);
           }
         } catch (error) {
           console.error('Error fetching document:', error);
+          setPreviewError(
+            error instanceof Error ? error.message : 'Failed to load document',
+          );
           setPreviewBlobUrl(null);
         }
       };
@@ -504,7 +499,25 @@ export default function Documents({
           <ModalClose />
           <Typography level="title-lg">Document: {previewFile}</Typography>
 
-          {previewBlobUrl ? (
+          {previewError ? (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                height: '100%',
+                gap: 2,
+              }}
+            >
+              <Alert color="danger" variant="soft">
+                {previewError}
+              </Alert>
+              <Typography level="body-sm" color="neutral">
+                This file may not be displayable in the browser preview.
+              </Typography>
+            </Box>
+          ) : previewBlobUrl ? (
             <iframe
               src={previewBlobUrl}
               style={{ width: '100%', height: '100%' }}
@@ -549,114 +562,29 @@ export default function Documents({
           </Box>
         </ModalDialog>
       </Modal>
-      <Modal open={showWebpageModal} onClose={() => setShowWebpageModal(false)}>
-        <ModalDialog sx={{ width: '450px', maxWidth: '90vw' }}>
-          <ModalClose />
-          <Typography level="title-lg">Add Webpages</Typography>
-          <Typography level="body-sm" sx={{ mb: 2 }}>
-            Enter webpage URLs you want to add to your documents
-          </Typography>
 
-          <Box sx={{ mb: 2, maxHeight: '50vh', overflowY: 'auto' }}>
-            {webpageUrls.map((url, index) => (
-              <Box
-                key={index}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  mb: 1.5,
-                  gap: 1,
-                }}
-              >
-                <Input
-                  size="sm"
-                  placeholder="https://example.com"
-                  value={url}
-                  onChange={(e) => updateUrl(index, e.target.value)}
-                  sx={{ flexGrow: 1 }}
-                  error={url && !url.startsWith('http')}
-                  endDecorator={
-                    webpageUrls.length > 1 && (
-                      <IconButton
-                        size="sm"
-                        variant="plain"
-                        color="neutral"
-                        onClick={() => removeUrlField(index)}
-                      >
-                        <Typography fontSize="lg">×</Typography>
-                      </IconButton>
-                    )
-                  }
-                />
-              </Box>
-            ))}
-          </Box>
-
-          <Button
-            variant="outlined"
-            color="neutral"
+      {uploadError && (
+        <Alert
+          color="danger"
+          variant="soft"
+          sx={{
+            mb: 2,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          {uploadError}
+          <IconButton
             size="sm"
-            onClick={addUrlField}
-            startDecorator={<PlusCircleIcon size="16px" />}
-            sx={{ mb: 2 }}
+            variant="plain"
+            color="danger"
+            onClick={() => setUploadError(null)}
           >
-            Add Another URL
-          </Button>
-
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button
-              color="primary"
-              onClick={() => {
-                setLoading(true);
-                const validUrls = webpageUrls
-                  .map((url) => url.trim())
-                  .filter((url) => url && url.includes('://'));
-                if (validUrls.length > 0) {
-                  chatAPI
-                    .authenticatedFetch(
-                      chatAPI.Endpoints.Documents.UploadLinks(
-                        experimentInfo?.id,
-                        currentFolder,
-                      ),
-                      {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                          urls: validUrls,
-                        }),
-                      },
-                    )
-                    .then((response) => {
-                      if (!response.ok)
-                        throw new Error('Failed to add webpages');
-                      return response.json();
-                    })
-                    .then((data) => {
-                      console.log('Webpages added:', data);
-                      setWebpageUrls(['']);
-                      setShowWebpageModal(false);
-                      mutate();
-                    })
-                    .catch((error) => {
-                      console.error('Error adding webpages:', error);
-                    })
-                    .finally(() => {
-                      setLoading(false);
-                    });
-                } else {
-                  setLoading(false);
-                  // Could add a toast or alert here about no valid URLs
-                }
-              }}
-              disabled={!webpageUrls.some((url) => url.trim())}
-            >
-              {loading ? <CircularProgress size="sm" /> : 'Add Webpages'}
-            </Button>
-          </Box>
-        </ModalDialog>
-      </Modal>
+            <XIcon size="18" />
+          </IconButton>
+        </Alert>
+      )}
 
       <Box
         sx={{
@@ -714,17 +642,6 @@ export default function Documents({
                 <FileUpIcon size="16px" />
               </ListItemDecorator>
               Upload File
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                setWebpageUrls(['']);
-                setShowWebpageModal(true);
-              }}
-            >
-              <ListItemDecorator>
-                <LinkIcon size="16px" />
-              </ListItemDecorator>
-              Add Webpage
             </MenuItem>
             <MenuItem
               onClick={() => {
@@ -941,8 +858,7 @@ export default function Documents({
                         experimentInfo={experimentInfo}
                         currentFolder={currentFolder}
                         mutate={mutate}
-                        setPreviewFile={setPreviewFile}
-                        isLocalMode={isLocalMode}
+                        onPreviewClick={setPreviewFile}
                       />
                     ),
                   )}
@@ -956,25 +872,7 @@ export default function Documents({
         <Typography level="body-xs" color="neutral">
           Allowed filetypes: .txt, .pdf, .csv, .epub, .ipynb, .mbox, .md, .ppt
         </Typography>
-        <TinyButton
-          startDecorator={<RotateCcwIcon size="12px" />}
-          color="neutral"
-          variant="outlined"
-          onClick={() => {
-            chatAPI.authenticatedFetch(
-              chatAPI.Endpoints.Rag.ReIndex(experimentInfo?.id),
-            );
-          }}
-        >
-          Reindex
-        </TinyButton>
       </Stack>
-      {additionalMessage && (
-        <Typography level="body-xs" mt={1}>
-          Documents for RAG should be uploaded in a folder called "rag" and only
-          those will be indexed for RAG.
-        </Typography>
-      )}
     </>
   );
 }
