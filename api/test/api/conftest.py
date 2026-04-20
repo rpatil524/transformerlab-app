@@ -116,5 +116,13 @@ def client():
     asyncio.run(run_alembic_migrations())
     asyncio.run(seed_default_admin_user())
 
+    # Dispose the engine's connection pool so that stale connections from the
+    # asyncio.run() event loops above are not carried into the TestClient's
+    # own event loop.  Without this, asyncpg raises "Future attached to a
+    # different loop" because pooled connections are bound to the loop that
+    # created them.  dispose() is a no-op for SQLite's NullPool.
+    from transformerlab.db.session import async_engine  # noqa: E402
+    asyncio.run(async_engine.dispose())
+
     with AuthenticatedTestClient(app) as c:
         yield c
