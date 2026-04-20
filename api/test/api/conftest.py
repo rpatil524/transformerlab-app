@@ -122,6 +122,7 @@ def client():
     # different loop" because pooled connections are bound to the loop that
     # created them.  dispose() is a no-op for SQLite's NullPool.
     from transformerlab.db.session import async_engine  # noqa: E402
+
     asyncio.run(async_engine.dispose())
 
     with AuthenticatedTestClient(app) as c:
