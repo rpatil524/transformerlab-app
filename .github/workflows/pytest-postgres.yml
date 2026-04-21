@@ -48,6 +48,9 @@ jobs:
       DATABASE_DB: testdb
       DATABASE_USER: testuser
       DATABASE_PASSWORD: testpass
+      # Force NullPool for the async engine during tests so pooled asyncpg
+      # connections are not carried across pytest-asyncio's per-module event loops.
+      TFL_DB_FORCE_NULL_POOL: "1"
     strategy:
       fail-fast: false
 
