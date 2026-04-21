@@ -28,7 +28,7 @@ def upgrade() -> None:
     if not table_exists(connection, "config"):
         op.create_table(
             "config",
-            sa.Column("id", sa.Integer(), nullable=False, autoincrement=True),
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
             sa.Column("key", sa.String(), nullable=False),
             sa.Column("value", sa.String(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
@@ -87,7 +87,7 @@ def upgrade() -> None:
     if not table_exists(connection, "workflows"):
         op.create_table(
             "workflows",
-            sa.Column("id", sa.Integer(), nullable=False, autoincrement=True),
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
             sa.Column("name", sa.String(), nullable=True),
             sa.Column("config", sa.JSON(), nullable=True),
             sa.Column("status", sa.String(), nullable=True),
@@ -103,7 +103,7 @@ def upgrade() -> None:
     if not table_exists(connection, "workflow_runs"):
         op.create_table(
             "workflow_runs",
-            sa.Column("id", sa.Integer(), nullable=False, autoincrement=True),
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True, nullable=False),
             sa.Column("workflow_id", sa.Integer(), nullable=True),
             sa.Column("workflow_name", sa.String(), nullable=True),
             sa.Column("job_ids", sa.JSON(), nullable=True),
