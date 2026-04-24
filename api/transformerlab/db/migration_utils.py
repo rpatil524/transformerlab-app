@@ -44,3 +44,52 @@ def table_exists(connection, table_name: str) -> bool:
         )
 
     return result.fetchone() is not None
+
+
+def has_column(connection, table_name: str, column_name: str) -> bool:
+    """
+    Check if a column exists on a table.
+
+    Uses SQLAlchemy's Inspector API so this works across SQLite, PostgreSQL,
+    and any other dialect Alembic supports.
+
+    Args:
+        connection: The database connection from op.get_bind()
+        table_name: The name of the table
+        column_name: The name of the column to check
+
+    Returns:
+        bool: True if the column exists, False otherwise (including when the
+        table itself does not exist).
+    """
+    inspector = sa.inspect(connection)
+    if not inspector.has_table(table_name):
+        return False
+    return any(col["name"] == column_name for col in inspector.get_columns(table_name))
+
+
+def has_index(connection, table_name: str, index_name: str) -> bool:
+    """
+    Check if an index exists on a table.
+
+    Uses SQLAlchemy's Inspector API so this works across SQLite, PostgreSQL,
+    and any other dialect Alembic supports. Also looks at unique constraints
+    since some dialects (notably SQLite) expose unique constraints as indexes
+    while others (Postgres) surface them separately.
+
+    Args:
+        connection: The database connection from op.get_bind()
+        table_name: The name of the table
+        index_name: The name of the index to check
+
+    Returns:
+        bool: True if the index exists, False otherwise (including when the
+        table itself does not exist).
+    """
+    inspector = sa.inspect(connection)
+    if not inspector.has_table(table_name):
+        return False
+    if any(idx["name"] == index_name for idx in inspector.get_indexes(table_name)):
+        return True
+    # Postgres reports named unique constraints separately from indexes.
+    return any(uc.get("name") == index_name for uc in inspector.get_unique_constraints(table_name))
