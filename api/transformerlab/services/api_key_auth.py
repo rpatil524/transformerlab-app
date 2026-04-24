@@ -88,7 +88,11 @@ async def validate_api_key_and_get_user(
         raise HTTPException(status_code=401, detail="API key has expired")
 
     # Get the user
-    stmt = select(User).where(User.id == uuid.UUID(api_key_obj.user_id))
+    try:
+        user_uuid = uuid.UUID(api_key_obj.user_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    stmt = select(User).where(User.id == user_uuid)
     result = await session.execute(stmt)
     user = result.unique().scalar_one_or_none()
 

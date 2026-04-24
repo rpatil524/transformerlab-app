@@ -1,5 +1,7 @@
 # --- Centralized Database Configuration ---
 import os
+from urllib.parse import quote_plus
+
 from lab import HOME_DIR
 
 db = None  # This will hold the aiosqlite connection (for SQLite) or None (for PostgreSQL)
@@ -15,9 +17,7 @@ DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")
 # Construct DATABASE_URL based on available configuration
 if DATABASE_HOST and DATABASE_DB and DATABASE_USER and DATABASE_PASSWORD:
     # Use PostgreSQL if all required credentials are provided
-    DATABASE_URL = (
-        f"postgresql+asyncpg://{DATABASE_USER}:{DATABASE_PASSWORD}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_DB}"
-    )
+    DATABASE_URL = f"postgresql+asyncpg://{DATABASE_USER}:{quote_plus(DATABASE_PASSWORD)}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_DB}"
     DATABASE_TYPE = "postgresql"
 else:
     # Fall back to SQLite (default)
