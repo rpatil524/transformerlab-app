@@ -34,11 +34,14 @@ def include_object(object, name, type_, _reflected, _compare_to):
     return True
 
 
-# Pass the async URL straight through — no rewriting required. The async
-# engine natively drives `postgresql+asyncpg://` and `sqlite+aiosqlite://`,
-# and `connection.run_sync(...)` below gives migration files a standard
-# sync Connection facade so existing `op.*` / `sa.text(...)` calls still work.
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# NOTE: We deliberately do NOT call `config.set_main_option("sqlalchemy.url", ...)`
+# here. Alembic's Config object is backed by Python's `configparser`, which
+# performs `%`-style interpolation on values. Postgres DSNs built with
+# `urllib.parse.quote_plus` on the password (see db/constants.py) contain
+# percent-encoded characters (e.g. `%7D`, `%3F`) that configparser would try
+# to interpolate, raising `ValueError: invalid interpolation syntax`. Instead
+# we inject DATABASE_URL directly into the dict that drives the engine and
+# the offline `context.configure(url=...)` call below.
 
 
 def run_migrations_offline() -> None:
@@ -53,9 +56,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=DATABASE_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -80,8 +82,12 @@ def do_run_migrations(connection) -> None:
 
 async def run_async_migrations() -> None:
     """Create an async engine and run the sync migrations inside it."""
+    section = config.get_section(config.config_ini_section, {}) or {}
+    # Set the URL on the section dict (not via configparser) so percent-encoded
+    # characters in the password are not treated as interpolation tokens.
+    section["sqlalchemy.url"] = DATABASE_URL
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
