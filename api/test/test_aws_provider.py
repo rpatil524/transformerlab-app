@@ -212,7 +212,7 @@ class TestUserDataScript:
         user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))
         assert "curl -LsSf https://astral.sh/uv/install.sh | sh" in user_data
         assert 'export PATH="$HOME/.local/bin:/root/.local/bin:/home/ubuntu/.local/bin:$PATH"' in user_data
-        assert "ln -sf /root/.local/bin/uv /usr/local/bin/uv" in user_data
+        assert "cp /root/.local/bin/uv /usr/local/bin/uv && chmod +x /usr/local/bin/uv" in user_data
 
 
 class TestStopCluster:

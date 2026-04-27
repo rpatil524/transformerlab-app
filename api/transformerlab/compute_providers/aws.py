@@ -287,9 +287,10 @@ export PIP_BREAK_SYSTEM_PACKAGES=1
 # Install uv for task setups that use `uv pip ...`.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:/root/.local/bin:/home/ubuntu/.local/bin:$PATH"
-# Make uv available even when later commands run with a different shell/user PATH.
-if [ -x /root/.local/bin/uv ]; then ln -sf /root/.local/bin/uv /usr/local/bin/uv; fi
-if [ -x /root/.local/bin/uvx ]; then ln -sf /root/.local/bin/uvx /usr/local/bin/uvx; fi
+# Make uv available even when later commands run as a different user.
+# Do not symlink into /root; copy binaries so non-root users can execute them.
+if [ -x /root/.local/bin/uv ]; then cp /root/.local/bin/uv /usr/local/bin/uv && chmod +x /usr/local/bin/uv; fi
+if [ -x /root/.local/bin/uvx ]; then cp /root/.local/bin/uvx /usr/local/bin/uvx && chmod +x /usr/local/bin/uvx; fi
 {env_exports}
 {setup_block}
 ({run_cmd}) 2>&1 | tee /workspace/run_logs.txt
