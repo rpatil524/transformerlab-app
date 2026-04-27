@@ -45,7 +45,7 @@ def upload_one_file(
     init_body = init_resp.json()
     upload_id = init_body["upload_id"]
     chunk_size = init_body["chunk_size"]
-    total_chunks = max(1, math.ceil(size / chunk_size))
+    total_chunks = math.ceil(size / chunk_size)
 
     status_resp = api.get(f"/upload/{upload_id}/status")
     received: set[int] = set(status_resp.json().get("received", [])) if status_resp.status_code == 200 else set()

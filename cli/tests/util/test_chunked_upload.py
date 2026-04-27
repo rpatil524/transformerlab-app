@@ -72,3 +72,23 @@ def test_upload_one_file_chunk_failure_raises(post_json, get, put, tmp_path: Pat
 
     with pytest.raises(RuntimeError, match="chunk 0 failed"):
         upload_one_file(str(f))
+
+
+@patch("transformerlab_cli.util.chunked_upload.api.put")
+@patch("transformerlab_cli.util.chunked_upload.api.get")
+@patch("transformerlab_cli.util.chunked_upload.api.post_json")
+def test_upload_one_file_zero_bytes_sends_no_chunks(post_json, get, put, tmp_path: Path):
+    f = tmp_path / "empty.bin"
+    f.write_bytes(b"")
+    post_json.side_effect = [
+        _resp(200, {"upload_id": "abc", "chunk_size": 1024 * 1024}),
+        _resp(200, {"temp_path": "/tmp/abc/assembled"}),
+    ]
+    get.return_value = _resp(200, {"received": []})
+
+    upload_id = upload_one_file(str(f))
+
+    assert upload_id == "abc"
+    assert put.call_count == 0
+    complete_call = post_json.call_args_list[1]
+    assert complete_call.kwargs["json_data"] == {"total_chunks": 0}
