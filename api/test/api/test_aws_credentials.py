@@ -56,20 +56,21 @@ def test_write_preserves_other_profiles(tmp_path):
 
 
 def test_create_aws_provider_injects_aws_profile_and_team_id():
-    """create_provider_for_team must inject aws_profile and team_id into config for AWS providers."""
+    """create_provider_for_team must persist aws_profile and team_id into config for AWS providers."""
     from transformerlab.services.compute_provider.team_provider_endpoints import create_provider_for_team
 
     class FakeConfig:
         def model_dump(self, **kwargs):
             return {"region": "us-east-1"}
 
-    captured_config = {}
+    captured_create_config = {}
+    captured_update_config = {}
 
     async def fake_create_team_provider(session, team_id, name, provider_type, config, created_by_user_id):
-        captured_config.update(config)
+        captured_create_config.update(config)
         mock_provider = MagicMock()
         mock_provider.type = "aws"
-        mock_provider.id = "prov-1"
+        mock_provider.id = "prov-1234"
         mock_provider.name = name
         mock_provider.config = config
         mock_provider.is_default = False
@@ -81,6 +82,11 @@ def test_create_aws_provider_injects_aws_profile_and_team_id():
         mock_provider.updated_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
         return mock_provider
 
+    async def fake_update_team_provider(session, provider, name, config, disabled, is_default):
+        captured_update_config.update(config or {})
+        provider.config = config
+        return provider
+
     provider_data = MagicMock()
     provider_data.type = "aws"
     provider_data.name = "my-aws"
@@ -90,6 +96,10 @@ def test_create_aws_provider_injects_aws_profile_and_team_id():
         patch(
             "transformerlab.services.compute_provider.team_provider_endpoints.create_team_provider",
             side_effect=fake_create_team_provider,
+        ),
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.update_team_provider",
+            side_effect=fake_update_team_provider,
         ),
         patch(
             "transformerlab.services.compute_provider.team_provider_endpoints.list_team_providers",
@@ -115,15 +125,17 @@ def test_create_aws_provider_injects_aws_profile_and_team_id():
             )
         )
 
-    assert captured_config["aws_profile"] == "transformerlab-compute-team-xyz"
-    assert captured_config["team_id"] == "team-xyz"
+    assert captured_create_config["team_id"] == "team-xyz"
+    assert "aws_profile" not in captured_create_config
+    assert captured_update_config["aws_profile"] == "tlab-compute-team-xyz-prov-123"
+    assert captured_update_config["team_id"] == "team-xyz"
 
 
 def test_save_aws_credentials_endpoint():
     """POST /{provider_id}/aws/credentials calls write_aws_credentials_to_profile."""
     mock_provider = MagicMock()
     mock_provider.type = "aws"
-    mock_provider.config = {"aws_profile": "transformerlab-compute-team-abc"}
+    mock_provider.config = {"aws_profile": "tlab-compute-team-abc-provider"}
 
     with (
         patch(
@@ -147,11 +159,11 @@ def test_save_aws_credentials_endpoint():
             )
         )
 
-        mock_write.assert_called_once_with("transformerlab-compute-team-abc", "AKIATEST", "mysecret")
+        mock_write.assert_called_once_with("tlab-compute-team-abc-provider", "AKIATEST", "mysecret")
 
 
-def test_update_aws_provider_reinjects_profile_and_team_id_when_missing():
-    """update_provider_for_team must keep AWS config launchable even for legacy providers missing aws_profile."""
+def test_update_aws_provider_preserves_missing_profile_without_backfill():
+    """update_provider_for_team should not backfill aws_profile for legacy AWS configs."""
     from transformerlab.services.compute_provider.team_provider_endpoints import update_provider_for_team
 
     provider = MagicMock()
@@ -208,12 +220,12 @@ def test_update_aws_provider_reinjects_profile_and_team_id_when_missing():
         )
 
     assert captured["region"] == "us-west-2"
-    assert captured["aws_profile"] == "transformerlab-compute-team-xyz"
+    assert "aws_profile" not in captured
     assert captured["team_id"] == "team-xyz"
 
 
-def test_db_record_to_provider_config_backfills_missing_aws_fields():
-    """db_record_to_provider_config should make legacy AWS records instantiable."""
+def test_db_record_to_provider_config_does_not_backfill_missing_aws_profile():
+    """db_record_to_provider_config should not backfill aws_profile for legacy AWS configs."""
     from transformerlab.services.provider_service import db_record_to_provider_config
 
     record = MagicMock()
@@ -224,6 +236,6 @@ def test_db_record_to_provider_config_backfills_missing_aws_fields():
 
     cfg = db_record_to_provider_config(record)
 
-    assert cfg.aws_profile == "transformerlab-compute-team-legacy"
+    assert cfg.aws_profile is None
     assert cfg.team_id == "team-legacy"
     assert cfg.region == "us-west-2"

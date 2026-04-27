@@ -17,6 +17,7 @@ from transformerlab.services.compute_provider.local_setup_service import (
 )
 from transformerlab.services.provider_service import (
     _local_providers_disabled,
+    build_aws_profile_name,
     create_team_provider,
     delete_team_provider,
     detect_local_supported_accelerators,
@@ -103,9 +104,8 @@ async def create_provider_for_team(
 
     config_dict = provider_data.config.model_dump(exclude_none=True)
 
-    # Auto-inject aws_profile and team_id for AWS providers
+    # Auto-inject team_id for AWS providers; aws_profile is finalized after provider ID exists.
     if provider_data.type == ProviderType.AWS:
-        config_dict.setdefault("aws_profile", f"transformerlab-compute-{team_id}")
         config_dict["team_id"] = team_id
 
     provider = await create_team_provider(
@@ -118,6 +118,20 @@ async def create_provider_for_team(
         config=config_dict,
         created_by_user_id=str(user.id),
     )
+
+    if provider.type == ProviderType.AWS.value:
+        provider_config = dict(provider.config or {})
+        if not provider_config.get("aws_profile"):
+            provider_config["aws_profile"] = build_aws_profile_name(team_id, str(provider.id))
+            provider_config["team_id"] = team_id
+            provider = await update_team_provider(
+                session=session,
+                provider=provider,
+                name=None,
+                config=provider_config,
+                disabled=None,
+                is_default=None,
+            )
 
     await cache.invalidate("providers")
 
@@ -198,7 +212,6 @@ async def update_provider_for_team(
             new_config.pop("api_key", None)
         update_config = {**existing_config, **new_config}
         if provider.type == ProviderType.AWS.value:
-            update_config.setdefault("aws_profile", f"transformerlab-compute-{team_id}")
             update_config["team_id"] = team_id
 
     update_disabled = provider_data.disabled if provider_data.disabled is not None else None
