@@ -1,11 +1,12 @@
 import json
-import os
 
 import typer
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
 
 import transformerlab_cli.util.api as api
 from transformerlab_cli.state import cli_state
 from transformerlab_cli.util.config import check_configs
+from transformerlab_cli.util import asset_paths, chunked_upload
 from transformerlab_cli.util.ui import console, render_table, render_object
 
 app = typer.Typer()
@@ -187,94 +188,57 @@ def command_dataset_edit(
 
 @app.command("upload")
 def command_dataset_upload(
-    dataset_id: str = typer.Argument(..., help="The dataset ID (will be created if it does not exist)"),
-    files: list[str] = typer.Argument(..., help="One or more local files to upload (.jsonl, .json, or .csv)"),
+    dataset_id: str = typer.Argument(..., help="The dataset ID. Created if it does not exist."),
+    paths: list[str] = typer.Argument(..., help="Files or directories to upload."),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing server-side files."),
 ):
-    """Upload local files to a dataset (creates the dataset if it does not exist).
-
-    Example:
-        lab dataset upload my-dataset train.jsonl eval.jsonl
-    """
+    """Upload local files/directories to a dataset on the server."""
     check_configs(output_format=cli_state.output_format)
 
-    # Validate all files exist before doing anything
-    for filepath in files:
-        if not os.path.isfile(filepath):
-            console.print(f"[error]Error:[/error] File not found: {filepath}")
-            raise typer.Exit(1)
-
-    # ── Step 1: ensure the dataset exists on the server ──
-    if cli_state.output_format != "json":
-        with console.status(f"[bold success]Ensuring dataset '{dataset_id}' exists...[/bold success]", spinner="dots"):
-            check_response = api.get(f"/data/info?dataset_id={dataset_id}")
-    else:
-        check_response = api.get(f"/data/info?dataset_id={dataset_id}")
-
-    if check_response.status_code == 200 and check_response.json():
-        # Dataset already exists
-        if cli_state.output_format != "json":
-            console.print(f"[info]Dataset [bold]{dataset_id}[/bold] already exists — uploading files into it.[/info]")
-    else:
-        # Create a new dataset
-        if cli_state.output_format != "json":
-            with console.status(f"[bold success]Creating dataset '{dataset_id}'...[/bold success]", spinner="dots"):
-                create_response = api.get(f"/data/new?dataset_id={dataset_id}")
-        else:
-            create_response = api.get(f"/data/new?dataset_id={dataset_id}")
-
-        if create_response.status_code != 200 or create_response.json().get("status") != "success":
-            detail = _extract_error(create_response)
-            if cli_state.output_format == "json":
-                print(json.dumps({"error": f"Failed to create dataset: {detail}"}))
-            else:
-                console.print(f"[error]Error:[/error] Could not create dataset. {detail}")
-            raise typer.Exit(1)
-
-        if cli_state.output_format != "json":
-            console.print(f"[success]✓[/success] Dataset [bold]{dataset_id}[/bold] created.")
-
-    # ── Step 2: upload each file ──
-    upload_files = []
-    file_handles = []
     try:
-        for filepath in files:
-            filename = os.path.basename(filepath)
-            fh = open(filepath, "rb")
-            file_handles.append(fh)
-            upload_files.append(("files", (filename, fh, "application/octet-stream")))
-
-        if cli_state.output_format != "json":
-            with console.status(f"[bold success]Uploading {len(files)} file(s)...[/bold success]", spinner="dots"):
-                response = api.post(
-                    f"/data/fileupload?dataset_id={dataset_id}",
-                    files=upload_files,
-                    timeout=300.0,
-                )
-        else:
-            response = api.post(
-                f"/data/fileupload?dataset_id={dataset_id}",
-                files=upload_files,
-                timeout=300.0,
-            )
-    finally:
-        for fh in file_handles:
-            fh.close()
-
-    if response.status_code == 200:
-        body = response.json()
-        if cli_state.output_format == "json":
-            print(json.dumps(body))
-        else:
-            uploaded = body if isinstance(body, list) else body.get("uploaded_files", files)
-            console.print(
-                f"[success]✓[/success] Uploaded [bold]{len(uploaded)}[/bold] file(s) to dataset [bold]{dataset_id}[/bold]."
-            )
-    else:
-        if cli_state.output_format == "json":
-            print(json.dumps({"error": f"Upload failed. Status code: {response.status_code}"}))
-            raise typer.Exit(1)
-        console.print(f"[error]Error:[/error] Upload failed. {_extract_error(response)}")
+        pairs = list(asset_paths.walk_inputs(paths))
+    except FileNotFoundError as exc:
+        console.print(f"[error]Error:[/error] path not found: {exc}")
         raise typer.Exit(1)
+    if not pairs:
+        console.print("[warning]No files to upload.[/warning]")
+        raise typer.Exit(1)
+
+    skipped: list[str] = []
+    failed: list[str] = []
+    with Progress(
+        TextColumn("[bold success]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+    ) as progress:
+        outer = progress.add_task("Uploading", total=len(pairs))
+        for local_path, relpath in pairs:
+            progress.update(outer, description=f"Uploading {relpath}")
+            try:
+                upload_id = chunked_upload.upload_one_file(local_path)
+            except Exception as exc:
+                console.print(f"[error]Error uploading {relpath}: {exc}")
+                failed.append(relpath)
+                progress.advance(outer)
+                continue
+            qs = f"dataset_id={dataset_id}&upload_id={upload_id}&relpath={relpath}&force={'true' if force else 'false'}"
+            resp = api.post_json(f"/data/fileupload?{qs}", json_data={})
+            if resp.status_code == 409:
+                console.print(f"[warning]Skipped (already exists):[/warning] {relpath}")
+                skipped.append(relpath)
+            elif resp.status_code != 200:
+                console.print(f"[error]Error uploading {relpath}: {_extract_error(resp)}")
+                failed.append(relpath)
+            progress.advance(outer)
+
+    console.print(
+        f"[success]✓[/success] Uploaded {len(pairs) - len(failed) - len(skipped)} file(s) to dataset [bold]{dataset_id}[/bold]."
+    )
+    if failed:
+        raise typer.Exit(1)
+    if skipped:
+        raise typer.Exit(2)
 
 
 # ──────────────────────────────────────────────
