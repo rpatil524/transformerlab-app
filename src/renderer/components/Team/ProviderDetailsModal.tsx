@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 /* eslint-disable react/require-default-props */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -18,14 +18,21 @@ import {
   FormLabel,
   FormHelperText,
   Textarea,
-  Alert,
   Chip,
-  Switch,
 } from '@mui/joy';
 import { useAPI, useAuth } from 'renderer/lib/authContext';
 import { getPath } from 'renderer/lib/api-client/urls';
 import { Endpoints } from 'renderer/lib/api-client/endpoints';
 import { useNotification } from 'renderer/components/Shared/NotificationSystem';
+import ProviderTypePicker, {
+  ProviderTypeOption,
+} from './providerForms/ProviderTypePicker';
+import SlurmProviderFields from './providerForms/SlurmProviderFields';
+import SkypilotProviderFields from './providerForms/SkypilotProviderFields';
+import DstackProviderFields from './providerForms/DstackProviderFields';
+import RunpodProviderFields from './providerForms/RunpodProviderFields';
+import AwsProviderFields from './providerForms/AwsProviderFields';
+import LocalProviderFields from './providerForms/LocalProviderFields';
 
 interface ProviderDetailsModalProps {
   open: boolean;
@@ -100,7 +107,6 @@ export default function ProviderDetailsModal({
   const [postTaskHook, setPostTaskHook] = useState<string>('');
   const [preSetupHook, setPreSetupHook] = useState<string>('');
   const [postSetupHook, setPostSetupHook] = useState<string>('');
-  const [hooksExpanded, setHooksExpanded] = useState(false);
   const [forceRefresh, setForceRefresh] = useState(false);
 
   // SLURM-specific form fields
@@ -147,6 +153,61 @@ export default function ProviderDetailsModal({
       skip: !providerId,
     },
   );
+
+  const providerTypeOptions = useMemo<ProviderTypeOption[]>(() => {
+    const baseOptions: ProviderTypeOption[] = [
+      {
+        value: 'skypilot',
+        label: 'SkyPilot',
+        description: 'Remote cloud orchestration through a SkyPilot server.',
+      },
+      {
+        value: 'slurm',
+        label: 'SLURM',
+        description: 'Use a SLURM cluster through SSH or REST.',
+      },
+      {
+        value: 'runpod',
+        label: 'RunPod',
+        description: 'Run workloads on RunPod infrastructure.',
+      },
+      {
+        value: 'dstack',
+        label: 'dstack',
+        description: 'Connect to your dstack control plane.',
+      },
+      {
+        value: 'aws',
+        label: 'AWS (beta)',
+        description: 'Launch and manage compute on AWS.',
+      },
+    ];
+
+    if (!hasLocalProvider || providerId) {
+      baseOptions.push({
+        value: 'local',
+        label: 'Local',
+        description: 'Run jobs on this machine using local resources.',
+      });
+    }
+
+    return baseOptions;
+  }, [hasLocalProvider, providerId]);
+
+  const awsProfile = useMemo(() => {
+    if (!providerId) return undefined;
+    const configObj =
+      typeof providerData?.config === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(providerData.config);
+            } catch {
+              return {};
+            }
+          })()
+        : providerData?.config || {};
+    return configObj?.aws_profile;
+  }, [providerData?.config, providerId]);
 
   // Helper to parse config and extract SkyPilot fields
   const parseSkypilotConfig = (configObj: any) => {
@@ -495,7 +556,7 @@ export default function ProviderDetailsModal({
       // out of the raw JSON configuration.
       if (type === 'local') {
         // Optimistic defaults while we query the backend for real detection.
-        setSupportedAccelerators(DEFAULT_SUPPORTED_ACCELERATORS['local'] || []);
+        setSupportedAccelerators(DEFAULT_SUPPORTED_ACCELERATORS.local || []);
 
         let cancelled = false;
         const detectLocal = async () => {
@@ -566,14 +627,15 @@ export default function ProviderDetailsModal({
       }
       if (type === 'aws') {
         try {
-          const configObj = JSON.parse(DEFAULT_CONFIGS['aws']);
+          const configObj = JSON.parse(DEFAULT_CONFIGS.aws);
           parseAwsConfig(configObj);
         } catch (e) {
           // Ignore parse errors
         }
       }
     }
-  }, [type, providerId]);
+    return undefined;
+  }, [type, providerId, fetchWithAuth]);
 
   // Update config JSON when form fields change
   useEffect(() => {
@@ -778,9 +840,14 @@ export default function ProviderDetailsModal({
       const hasAwsCreds = Boolean(
         trimmedAwsAccessKeyId && trimmedAwsSecretAccessKey,
       );
+      const hasOnlyAccessKeyId = Boolean(
+        trimmedAwsAccessKeyId && !trimmedAwsSecretAccessKey,
+      );
+      const hasOnlySecretAccessKey = Boolean(
+        !trimmedAwsAccessKeyId && trimmedAwsSecretAccessKey,
+      );
       const hasPartialAwsCreds = Boolean(
-        (trimmedAwsAccessKeyId && !trimmedAwsSecretAccessKey) ||
-        (!trimmedAwsAccessKeyId && trimmedAwsSecretAccessKey),
+        hasOnlyAccessKeyId || hasOnlySecretAccessKey,
       );
       if (type === 'aws' && hasPartialAwsCreds) {
         addNotification({
@@ -870,7 +937,7 @@ export default function ProviderDetailsModal({
         // eslint-disable-next-line no-console
         console.error('Error updating provider:', errorData);
         let message = 'Could not save compute provider.';
-        const detail = (errorData as { detail?: unknown }).detail;
+        const { detail } = errorData as { detail?: unknown };
         let nameValidationMessage: string | null = null;
         if (typeof detail === 'string') {
           message = detail;
@@ -910,12 +977,20 @@ export default function ProviderDetailsModal({
     }
   };
 
+  const selectedProviderLabel =
+    providerTypeOptions.find((option) => option.value === type)?.label ||
+    'Compute Provider';
+  let dialogTitle = 'Add Compute Provider';
+  if (providerId) {
+    dialogTitle = 'Edit Compute Provider';
+  } else if (type) {
+    dialogTitle = `Add ${selectedProviderLabel}`;
+  }
+
   return (
     <Modal open={open} onClose={onClose}>
       <ModalDialog sx={{ gap: 0, width: 600, height: 700, overflow: 'auto' }}>
-        <DialogTitle>
-          {providerId ? 'Edit Compute Provider' : 'Add Compute Provider'}
-        </DialogTitle>
+        <DialogTitle>{dialogTitle}</DialogTitle>
         <DialogContent>
           {providerId && providerDataLoading ? (
             <Box
@@ -931,541 +1006,206 @@ export default function ProviderDetailsModal({
             </Box>
           ) : (
             <>
-              <FormControl sx={{ mt: 2 }}>
-                <FormLabel>Compute Provider Type</FormLabel>
-                <Select
-                  value={type}
-                  onChange={(event, value) => setType(value ?? 'skypilot')}
-                  disabled={!!providerId}
-                  sx={{ width: '100%' }}
-                >
-                  <Option value="skypilot">Skypilot</Option>
-                  <Option value="slurm">SLURM</Option>
-                  <Option value="runpod">Runpod</Option>
-                  <Option value="dstack">dstack</Option>
-                  <Option value="aws">AWS (beta)</Option>
-                  {!hasLocalProvider && !providerId && (
-                    <Option value="local">Local</Option>
-                  )}
-                </Select>
-                {providerId && (
-                  <Typography
-                    level="body-sm"
-                    sx={{ mt: 0.5, color: 'text.tertiary' }}
-                  >
-                    Provider type cannot be changed after creation
-                  </Typography>
-                )}
-              </FormControl>
-              <FormControl required error={!!nameError} sx={{ mt: 1 }}>
-                <FormLabel>Compute Provider Name</FormLabel>
-                <Input
-                  value={name}
-                  onChange={(event) => {
-                    setName(event.currentTarget.value);
-                    setNameError(null);
-                  }}
-                  placeholder="Enter friendly name for compute provider"
-                  fullWidth
-                  color={nameError ? 'danger' : undefined}
+              {!providerId && !type ? (
+                <ProviderTypePicker
+                  options={providerTypeOptions}
+                  onSelect={(selectedType) => setType(selectedType)}
                 />
-                {nameError ? (
-                  <FormHelperText>{nameError}</FormHelperText>
-                ) : null}
-              </FormControl>
-
-              {type === 'local' && !providerId && (
-                <FormControl
-                  orientation="horizontal"
-                  sx={{ mt: 1, alignItems: 'center', gap: 1 }}
-                >
-                  <Box>
-                    <FormLabel>Force fresh install</FormLabel>
-                    <Typography level="body-sm" sx={{ color: 'text.tertiary' }}>
-                      Delete the existing conda environment, install log, and
-                      config and run a clean install from scratch.
-                    </Typography>
-                  </Box>
-                  <Switch
-                    checked={forceRefresh}
-                    onChange={(e) => setForceRefresh(e.target.checked)}
-                  />
-                </FormControl>
-              )}
-
-              <FormControl sx={{ mt: 1 }}>
-                <FormLabel>Supported Accelerators</FormLabel>
-                <Select
-                  multiple
-                  value={supportedAccelerators}
-                  onChange={(event, newValue) =>
-                    setSupportedAccelerators(newValue)
-                  }
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', gap: '0.25rem' }}>
-                      {selected.map((selectedOption) => (
-                        <Chip
-                          key={selectedOption.value}
-                          variant="soft"
-                          color="primary"
-                        >
-                          {selectedOption.label}
-                        </Chip>
+              ) : (
+                <>
+                  <FormControl sx={{ mt: 2 }}>
+                    <FormLabel>Compute Provider Type</FormLabel>
+                    <Select value={type} disabled sx={{ width: '100%' }}>
+                      {providerTypeOptions.map((option) => (
+                        <Option key={option.value} value={option.value}>
+                          {option.label}
+                        </Option>
                       ))}
-                    </Box>
-                  )}
-                  placeholder="Select supported accelerators"
-                  sx={{ width: '100%' }}
-                  slotProps={{
-                    listbox: {
-                      sx: {
-                        width: '100%',
-                      },
-                    },
-                  }}
-                >
-                  {ACCELERATOR_OPTIONS.map((option) => (
-                    <Option key={option} value={option}>
-                      {option}
-                    </Option>
-                  ))}
-                </Select>
-                <Typography
-                  level="body-sm"
-                  sx={{ mt: 0.5, color: 'text.tertiary' }}
-                >
-                  Select the types of hardware this provider supports.
-                </Typography>
-              </FormControl>
-
-              {/* SLURM-specific form fields */}
-              {type === 'slurm' && (
-                <>
-                  <Alert color="primary" variant="soft" sx={{ mt: 2 }}>
-                    <Typography level="body-sm">
-                      <strong>SLURM User ID:</strong> All jobs launched through
-                      this provider will run as the specified SLURM user. Make
-                      sure your team&apos;s SSH key (from Team Settings → SSH
-                      Key) is added to that user&apos;s authorized_keys on the
-                      SLURM login node.
-                    </Typography>
-                  </Alert>
-
-                  <FormControl sx={{ mt: 2 }}>
-                    <FormLabel>Connection Mode</FormLabel>
-                    <Select
-                      value={slurmMode}
-                      onChange={(event, value) => setSlurmMode(value ?? 'ssh')}
-                      sx={{ width: '100%' }}
-                    >
-                      <Option value="ssh">SSH</Option>
-                      <Option value="rest">REST API</Option>
                     </Select>
+                    <Typography
+                      level="body-sm"
+                      sx={{ mt: 0.5, color: 'text.tertiary' }}
+                    >
+                      {providerId
+                        ? 'Provider type cannot be changed after creation'
+                        : 'Use Cancel to close and choose a different provider type.'}
+                    </Typography>
                   </FormControl>
+                  <FormControl required error={!!nameError} sx={{ mt: 1 }}>
+                    <FormLabel>Compute Provider Name</FormLabel>
+                    <Input
+                      value={name}
+                      onChange={(event) => {
+                        setName(event.currentTarget.value);
+                        setNameError(null);
+                      }}
+                      placeholder="Enter friendly name for compute provider"
+                      fullWidth
+                      color={nameError ? 'danger' : undefined}
+                    />
+                    {nameError ? (
+                      <FormHelperText>{nameError}</FormHelperText>
+                    ) : null}
+                  </FormControl>
+                </>
+              )}
 
-                  {slurmMode === 'ssh' ? (
-                    <>
-                      <FormControl sx={{ mt: 1 }}>
-                        <FormLabel>SSH Host *</FormLabel>
-                        <Input
-                          value={slurmSshHost}
-                          onChange={(event) =>
-                            setSlurmSshHost(event.currentTarget.value)
-                          }
-                          placeholder="slurm-login.example.com"
-                          fullWidth
-                        />
-                      </FormControl>
-                      <FormControl sx={{ mt: 1 }}>
-                        <FormLabel>SLURM User ID *</FormLabel>
-                        <Input
-                          value={slurmSshUser}
-                          onChange={(event) =>
-                            setSlurmSshUser(event.currentTarget.value)
-                          }
-                          placeholder="your_slurm_username"
-                          fullWidth
-                        />
-                        <Typography
-                          level="body-sm"
-                          sx={{ mt: 0.5, color: 'text.tertiary' }}
-                        >
-                          All jobs will run as this user on SLURM
-                        </Typography>
-                      </FormControl>
-                      <FormControl sx={{ mt: 1 }}>
-                        <FormLabel>SSH Port</FormLabel>
-                        <Input
-                          value={slurmSshPort}
-                          onChange={(event) =>
-                            setSlurmSshPort(event.currentTarget.value)
-                          }
-                          placeholder="22"
-                          type="number"
-                          fullWidth
-                        />
-                      </FormControl>
-                      <FormControl sx={{ mt: 1 }}>
-                        <FormLabel>SSH Key Path (Optional)</FormLabel>
-                        <Input
-                          value={slurmSshKeyPath}
-                          onChange={(event) =>
-                            setSlurmSshKeyPath(event.currentTarget.value)
-                          }
-                          placeholder="Leave empty to use team SSH key"
-                          fullWidth
-                        />
-                        <Typography
-                          level="body-sm"
-                          sx={{ mt: 0.5, color: 'text.tertiary' }}
-                        >
-                          Path to private key on API server. If empty, will use
-                          your team&apos;s SSH key.
-                        </Typography>
-                      </FormControl>
-                    </>
-                  ) : (
-                    <>
-                      <FormControl sx={{ mt: 1 }}>
-                        <FormLabel>REST API URL *</FormLabel>
-                        <Input
-                          value={slurmRestUrl}
-                          onChange={(event) =>
-                            setSlurmRestUrl(event.currentTarget.value)
-                          }
-                          placeholder="https://slurm-api.example.com"
-                          fullWidth
-                        />
-                      </FormControl>
-                      <FormControl sx={{ mt: 1 }}>
-                        <FormLabel>SLURM User ID *</FormLabel>
-                        <Input
-                          value={slurmSshUser}
-                          onChange={(event) =>
-                            setSlurmSshUser(event.currentTarget.value)
-                          }
-                          placeholder="your_slurm_username"
-                          fullWidth
-                        />
-                        <Typography
-                          level="body-sm"
-                          sx={{ mt: 0.5, color: 'text.tertiary' }}
-                        >
-                          All jobs will run as this user on SLURM
-                        </Typography>
-                      </FormControl>
-                      <FormControl sx={{ mt: 1 }}>
-                        <FormLabel>API Token (Optional)</FormLabel>
-                        <Input
-                          value={slurmApiToken}
-                          onChange={(event) => {
-                            setSlurmApiTokenChanged(true);
-                            setSlurmApiToken(event.currentTarget.value);
-                          }}
-                          placeholder={
-                            providerId
-                              ? 'Leave blank to keep existing token'
-                              : 'Your SLURM REST API token'
-                          }
-                          type="password"
-                          fullWidth
-                        />
-                      </FormControl>
-                    </>
+              {(providerId || type) && (
+                <>
+                  {type === 'local' && !providerId && (
+                    <LocalProviderFields
+                      forceRefresh={forceRefresh}
+                      setForceRefresh={setForceRefresh}
+                    />
                   )}
-                </>
-              )}
 
-              {/* SkyPilot-specific form fields */}
-              {type === 'skypilot' && (
-                <>
-                  <FormControl sx={{ mt: 2 }}>
-                    <FormLabel>SkyPilot Server URL *</FormLabel>
-                    <Input
-                      value={skypilotServerUrl}
-                      onChange={(event) =>
-                        setSkypilotServerUrl(event.currentTarget.value)
-                      }
-                      placeholder="http://localhost:46580"
-                      fullWidth
-                    />
-                  </FormControl>
                   <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>SkyPilot User ID</FormLabel>
-                    <Input
-                      value={skypilotUserId}
-                      onChange={(event) =>
-                        setSkypilotUserId(event.currentTarget.value)
+                    <FormLabel>Supported Accelerators</FormLabel>
+                    <Select
+                      multiple
+                      value={supportedAccelerators}
+                      onChange={(event, newValue) =>
+                        setSupportedAccelerators(newValue)
                       }
-                      placeholder="Your SkyPilot user ID"
-                      fullWidth
-                    />
-                  </FormControl>
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>SkyPilot User Name</FormLabel>
-                    <Input
-                      value={skypilotUserName}
-                      onChange={(event) =>
-                        setSkypilotUserName(event.currentTarget.value)
-                      }
-                      placeholder="Your SkyPilot user name"
-                      fullWidth
-                    />
-                  </FormControl>
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>Docker Image (optional)</FormLabel>
-                    <Input
-                      value={skypilotDockerImage}
-                      onChange={(event) =>
-                        setSkypilotDockerImage(event.currentTarget.value)
-                      }
-                      placeholder="docker:nvcr.io/nvidia/pytorch:23.10-py3"
-                      fullWidth
-                      sx={{ fontFamily: 'monospace', fontSize: 'sm' }}
-                    />
-                    <Typography
-                      level="body-sm"
-                      sx={{ mt: 0.5, color: 'text.tertiary' }}
-                    >
-                      Prefix with &quot;docker:&quot; to run inside a container
-                      on the provisioned VM. Must be Debian/Ubuntu-based. Leave
-                      empty to run directly on the VM.
-                    </Typography>
-                  </FormControl>
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>Default Region (optional)</FormLabel>
-                    <Input
-                      value={skypilotDefaultRegion}
-                      onChange={(event) =>
-                        setSkypilotDefaultRegion(event.currentTarget.value)
-                      }
-                      placeholder="e.g. us-east-1"
-                      fullWidth
-                    />
-                  </FormControl>
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>Default Zone (optional)</FormLabel>
-                    <Input
-                      value={skypilotDefaultZone}
-                      onChange={(event) =>
-                        setSkypilotDefaultZone(event.currentTarget.value)
-                      }
-                      placeholder="e.g. us-east-1a"
-                      fullWidth
-                    />
-                  </FormControl>
-                  <FormControl
-                    sx={{ mt: 1, flexDirection: 'row', alignItems: 'center' }}
-                  >
-                    <Switch
-                      checked={skypilotUseSpot}
-                      onChange={(event) =>
-                        setSkypilotUseSpot(event.target.checked)
-                      }
-                      sx={{ mr: 1 }}
-                    />
-                    <FormLabel sx={{ m: 0 }}>
-                      Use Spot / Preemptible Instances
-                    </FormLabel>
-                  </FormControl>
-                </>
-              )}
-
-              {type === 'dstack' && (
-                <>
-                  <FormControl sx={{ mt: 2 }}>
-                    <FormLabel>dstack Server URL *</FormLabel>
-                    <Input
-                      value={dstackServerUrl}
-                      onChange={(event) =>
-                        setDstackServerUrl(event.currentTarget.value)
-                      }
-                      placeholder="http://0.0.0.0:3000"
-                      fullWidth
-                    />
-                  </FormControl>
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>dstack API Token *</FormLabel>
-                    <Input
-                      value={dstackApiToken}
-                      onChange={(event) => {
-                        setDstackApiTokenChanged(true);
-                        setDstackApiToken(event.currentTarget.value);
+                      renderValue={(selected) => (
+                        <Box sx={{ display: 'flex', gap: '0.25rem' }}>
+                          {selected.map((selectedOption) => (
+                            <Chip
+                              key={selectedOption.value}
+                              variant="soft"
+                              color="primary"
+                            >
+                              {selectedOption.label}
+                            </Chip>
+                          ))}
+                        </Box>
+                      )}
+                      placeholder="Select supported accelerators"
+                      sx={{ width: '100%' }}
+                      slotProps={{
+                        listbox: {
+                          sx: {
+                            width: '100%',
+                          },
+                        },
                       }}
-                      placeholder={
-                        providerId
-                          ? 'Leave blank to keep existing token'
-                          : 'Your dstack API token'
-                      }
-                      type="password"
-                      fullWidth
-                    />
-                  </FormControl>
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>dstack Project Name *</FormLabel>
-                    <Input
-                      value={dstackProjectName}
-                      onChange={(event) =>
-                        setDstackProjectName(event.currentTarget.value)
-                      }
-                      placeholder="main"
-                      fullWidth
-                    />
-                  </FormControl>
-                </>
-              )}
-
-              {type === 'runpod' && (
-                <>
-                  <FormControl sx={{ mt: 2 }}>
-                    <FormLabel>RunPod API Key *</FormLabel>
-                    <Input
-                      value={runpodApiKey}
-                      onChange={(event) => {
-                        setRunpodApiKeyChanged(true);
-                        setRunpodApiKey(event.currentTarget.value);
-                      }}
-                      placeholder={
-                        providerId
-                          ? 'Leave blank to keep existing key'
-                          : 'Your RunPod API key'
-                      }
-                      type="password"
-                      fullWidth
-                    />
-                  </FormControl>
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>API Base URL</FormLabel>
-                    <Input
-                      value={runpodApiBaseUrl}
-                      onChange={(event) =>
-                        setRunpodApiBaseUrl(event.currentTarget.value)
-                      }
-                      placeholder="https://rest.runpod.io/v1"
-                      fullWidth
-                    />
+                    >
+                      {ACCELERATOR_OPTIONS.map((option) => (
+                        <Option key={option} value={option}>
+                          {option}
+                        </Option>
+                      ))}
+                    </Select>
                     <Typography
                       level="body-sm"
                       sx={{ mt: 0.5, color: 'text.tertiary' }}
                     >
-                      Leave blank to use the default RunPod API endpoint.
-                    </Typography>
-                  </FormControl>
-                </>
-              )}
-
-              {type === 'aws' && (
-                <>
-                  <FormControl sx={{ mt: 2 }}>
-                    <FormLabel>Region *</FormLabel>
-                    <Input
-                      value={awsRegion}
-                      onChange={(event) =>
-                        setAwsRegion(event.currentTarget.value)
-                      }
-                      placeholder="us-east-1"
-                      fullWidth
-                    />
-                    <Typography
-                      level="body-sm"
-                      sx={{ mt: 0.5, color: 'text.tertiary' }}
-                    >
-                      AWS region where instances will be launched.
+                      Select the types of hardware this provider supports.
                     </Typography>
                   </FormControl>
 
-                  {providerId &&
-                    (() => {
-                      const cfg =
-                        typeof providerData?.config === 'string'
-                          ? (() => {
-                              try {
-                                return JSON.parse(providerData.config);
-                              } catch {
-                                return {};
-                              }
-                            })()
-                          : providerData?.config || {};
-                      return cfg?.aws_profile ? (
-                        <FormControl sx={{ mt: 1 }}>
-                          <FormLabel>AWS Profile</FormLabel>
-                          <Typography
-                            level="body-sm"
-                            sx={{
-                              color: 'text.secondary',
-                              fontFamily: 'monospace',
-                            }}
-                          >
-                            {cfg.aws_profile}
-                          </Typography>
-                          <Typography
-                            level="body-sm"
-                            sx={{ mt: 0.5, color: 'text.tertiary' }}
-                          >
-                            Credentials entered below are saved to this profile
-                            when you click Save.
-                          </Typography>
-                        </FormControl>
-                      ) : null;
-                    })()}
+                  {type === 'slurm' && (
+                    <SlurmProviderFields
+                      slurmMode={slurmMode}
+                      setSlurmMode={setSlurmMode}
+                      slurmSshHost={slurmSshHost}
+                      setSlurmSshHost={setSlurmSshHost}
+                      slurmSshUser={slurmSshUser}
+                      setSlurmSshUser={setSlurmSshUser}
+                      slurmSshPort={slurmSshPort}
+                      setSlurmSshPort={setSlurmSshPort}
+                      slurmSshKeyPath={slurmSshKeyPath}
+                      setSlurmSshKeyPath={setSlurmSshKeyPath}
+                      slurmRestUrl={slurmRestUrl}
+                      setSlurmRestUrl={setSlurmRestUrl}
+                      slurmApiToken={slurmApiToken}
+                      setSlurmApiToken={setSlurmApiToken}
+                      providerId={providerId}
+                      setSlurmApiTokenChanged={setSlurmApiTokenChanged}
+                    />
+                  )}
 
-                  <Box
-                    sx={{
-                      mt: 1,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 1,
-                    }}
-                  >
-                    <FormControl>
-                      <FormLabel>Access Key ID</FormLabel>
-                      <Input
-                        value={awsAccessKeyId}
-                        onChange={(e) =>
-                          setAwsAccessKeyId(e.currentTarget.value)
-                        }
-                        placeholder="AKIA..."
-                        fullWidth
-                      />
-                    </FormControl>
-                    <FormControl>
-                      <FormLabel>Secret Access Key</FormLabel>
-                      <Input
-                        value={awsSecretAccessKey}
-                        onChange={(e) =>
-                          setAwsSecretAccessKey(e.currentTarget.value)
-                        }
-                        type="password"
-                        placeholder="Your AWS secret access key"
-                        fullWidth
-                      />
-                    </FormControl>
-                  </Box>
+                  {type === 'skypilot' && (
+                    <SkypilotProviderFields
+                      skypilotServerUrl={skypilotServerUrl}
+                      setSkypilotServerUrl={setSkypilotServerUrl}
+                      skypilotUserId={skypilotUserId}
+                      setSkypilotUserId={setSkypilotUserId}
+                      skypilotUserName={skypilotUserName}
+                      setSkypilotUserName={setSkypilotUserName}
+                      skypilotDockerImage={skypilotDockerImage}
+                      setSkypilotDockerImage={setSkypilotDockerImage}
+                      skypilotDefaultRegion={skypilotDefaultRegion}
+                      setSkypilotDefaultRegion={setSkypilotDefaultRegion}
+                      skypilotDefaultZone={skypilotDefaultZone}
+                      setSkypilotDefaultZone={setSkypilotDefaultZone}
+                      skypilotUseSpot={skypilotUseSpot}
+                      setSkypilotUseSpot={setSkypilotUseSpot}
+                    />
+                  )}
+
+                  {type === 'dstack' && (
+                    <DstackProviderFields
+                      dstackServerUrl={dstackServerUrl}
+                      setDstackServerUrl={setDstackServerUrl}
+                      dstackApiToken={dstackApiToken}
+                      setDstackApiToken={setDstackApiToken}
+                      dstackProjectName={dstackProjectName}
+                      setDstackProjectName={setDstackProjectName}
+                      providerId={providerId}
+                      setDstackApiTokenChanged={setDstackApiTokenChanged}
+                    />
+                  )}
+
+                  {type === 'runpod' && (
+                    <RunpodProviderFields
+                      runpodApiKey={runpodApiKey}
+                      setRunpodApiKey={setRunpodApiKey}
+                      runpodApiBaseUrl={runpodApiBaseUrl}
+                      setRunpodApiBaseUrl={setRunpodApiBaseUrl}
+                      providerId={providerId}
+                      setRunpodApiKeyChanged={setRunpodApiKeyChanged}
+                    />
+                  )}
+
+                  {type === 'aws' && (
+                    <AwsProviderFields
+                      awsRegion={awsRegion}
+                      setAwsRegion={setAwsRegion}
+                      awsAccessKeyId={awsAccessKeyId}
+                      setAwsAccessKeyId={setAwsAccessKeyId}
+                      awsSecretAccessKey={awsSecretAccessKey}
+                      setAwsSecretAccessKey={setAwsSecretAccessKey}
+                      awsProfile={awsProfile}
+                    />
+                  )}
+
+                  {/* Generic JSON config for non-structured providers or advanced editing */}
+                  {type !== 'slurm' &&
+                    type !== 'skypilot' &&
+                    type !== 'dstack' &&
+                    type !== 'runpod' &&
+                    type !== 'local' &&
+                    type !== 'aws' && (
+                      <FormControl sx={{ mt: 1 }}>
+                        <FormLabel>Configuration</FormLabel>
+                        <Textarea
+                          value={
+                            typeof config === 'string'
+                              ? config
+                              : JSON.stringify(config)
+                          }
+                          onChange={(event) =>
+                            setConfig(event.currentTarget.value)
+                          }
+                          placeholder="JSON sent to provider"
+                          minRows={5}
+                          maxRows={10}
+                        />
+                      </FormControl>
+                    )}
                 </>
               )}
-
-              {/* Generic JSON config for non-structured providers or advanced editing */}
-              {type !== 'slurm' &&
-                type !== 'skypilot' &&
-                type !== 'dstack' &&
-                type !== 'runpod' &&
-                type !== 'local' &&
-                type !== 'aws' && (
-                  <FormControl sx={{ mt: 1 }}>
-                    <FormLabel>Configuration</FormLabel>
-                    <Textarea
-                      value={
-                        typeof config === 'string'
-                          ? config
-                          : JSON.stringify(config)
-                      }
-                      onChange={(event) => setConfig(event.currentTarget.value)}
-                      placeholder="JSON sent to provider"
-                      minRows={5}
-                      maxRows={10}
-                    />
-                  </FormControl>
-                )}
             </>
           )}
         </DialogContent>
