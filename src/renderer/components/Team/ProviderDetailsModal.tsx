@@ -1028,7 +1028,7 @@ export default function ProviderDetailsModal({
                     >
                       {providerId
                         ? 'Provider type cannot be changed after creation'
-                        : 'Use Cancel to close and choose a different provider type.'}
+                        : ''}
                     </Typography>
                   </FormControl>
                   <FormControl required error={!!nameError} sx={{ mt: 1 }}>
@@ -1255,6 +1255,18 @@ export default function ProviderDetailsModal({
                   {setupStatus}
                 </Typography>
               )}
+              {!providerId && type ? (
+                <Button
+                  variant="plain"
+                  onClick={() => {
+                    setType('');
+                    setNameError(null);
+                  }}
+                  disabled={loading || isSetupInProgress}
+                >
+                  Back to provider type selection
+                </Button>
+              ) : null}
               <Button variant="outlined" onClick={onClose}>
                 Cancel
               </Button>
