@@ -29,7 +29,7 @@ def sanitize_relpath(relpath: str) -> str:
     if candidate.endswith("/"):
         raise InvalidRelpathError(f"relpath must not end with '/': {relpath!r}")
     parts = candidate.split("/")
-    if any(p in ("", "..") for p in parts):
+    if any(p in ("", ".", "..") for p in parts):
         raise InvalidRelpathError(f"relpath has invalid segment: {relpath!r}")
     return "/".join(parts)
 

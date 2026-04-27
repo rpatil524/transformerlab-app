@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,7 @@ def test_walk_inputs_directory_preserves_relpath(tmp_path: Path):
     pairs = sorted(walk_inputs([str(tmp_path)]))
     assert pairs == [
         (str(tmp_path / "config.json"), "config.json"),
-        (str(tmp_path / "sub" / "weights.bin"), os.path.join("sub", "weights.bin")),
+        (str(tmp_path / "sub" / "weights.bin"), "sub/weights.bin"),
     ]
 
 
@@ -83,6 +82,8 @@ def test_sanitize_relpath_normalises_backslashes():
         "",
         "sub/",
         "\x00.txt",
+        ".",
+        "a/./b",
     ],
 )
 def test_sanitize_relpath_rejects(bad):
