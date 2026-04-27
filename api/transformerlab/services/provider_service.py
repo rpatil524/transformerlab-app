@@ -257,6 +257,11 @@ def db_record_to_provider_config(
         default_template_id=config_dict.get("default_template_id"),
         default_network_volume_id=config_dict.get("default_network_volume_id"),
         supported_accelerators=config_dict.get("supported_accelerators"),
+        aws_profile=config_dict.get("aws_profile")
+        if config_dict.get("aws_profile")
+        else (f"transformerlab-compute-{record.team_id}" if record.type == ProviderType.AWS.value else None),
+        region=config_dict.get("region"),
+        team_id=config_dict.get("team_id") or (record.team_id if record.type == ProviderType.AWS.value else None),
         extra_config=extra_config,
     )
     # Local provider has no extra required config; workspace_dir is set at launch from get_workspace_dir()

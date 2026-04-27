@@ -26,7 +26,6 @@ import { useAPI, useAuth } from 'renderer/lib/authContext';
 import { getPath } from 'renderer/lib/api-client/urls';
 import { Endpoints } from 'renderer/lib/api-client/endpoints';
 import { useNotification } from 'renderer/components/Shared/NotificationSystem';
-import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
 
 interface ProviderDetailsModalProps {
   open: boolean;
@@ -136,9 +135,6 @@ export default function ProviderDetailsModal({
   const [awsRegion, setAwsRegion] = useState('us-east-1');
   const [awsAccessKeyId, setAwsAccessKeyId] = useState('');
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState('');
-  const [awsCredsSaved, setAwsCredsSaved] = useState(false);
-  const [awsCredsSaving, setAwsCredsSaving] = useState(false);
-  const [awsCredsExpanded, setAwsCredsExpanded] = useState(false);
 
   const { fetchWithAuth } = useAuth();
   const { data: providerData, isLoading: providerDataLoading } = useAPI(
@@ -442,8 +438,6 @@ export default function ProviderDetailsModal({
       setAwsRegion('us-east-1');
       setAwsAccessKeyId('');
       setAwsSecretAccessKey('');
-      setAwsCredsSaved(false);
-      setAwsCredsExpanded(false);
     }
   }, [providerId, providerData]);
 
@@ -487,8 +481,6 @@ export default function ProviderDetailsModal({
       setAwsRegion('us-east-1');
       setAwsAccessKeyId('');
       setAwsSecretAccessKey('');
-      setAwsCredsSaved(false);
-      setAwsCredsExpanded(false);
     }
   }, [open]);
 
@@ -725,6 +717,23 @@ export default function ProviderDetailsModal({
     );
   }
 
+  function saveAwsCredentials(
+    providerIdToSave: string,
+    accessKeyId: string,
+    secretAccessKey: string,
+  ) {
+    return fetchWithAuth(Endpoints.ComputeProvider.AwsCredentials(providerIdToSave), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        access_key_id: accessKeyId,
+        secret_access_key: secretAccessKey,
+      }),
+    });
+  }
+
   const saveProvider = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -760,6 +769,23 @@ export default function ProviderDetailsModal({
         if (supportedAccelerators.length > 0) {
           parsedConfig.supported_accelerators = supportedAccelerators;
         }
+      }
+      const trimmedAwsAccessKeyId = awsAccessKeyId.trim();
+      const trimmedAwsSecretAccessKey = awsSecretAccessKey.trim();
+      const hasAwsCreds = Boolean(
+        trimmedAwsAccessKeyId && trimmedAwsSecretAccessKey,
+      );
+      const hasPartialAwsCreds = Boolean(
+        (trimmedAwsAccessKeyId && !trimmedAwsSecretAccessKey) ||
+          (!trimmedAwsAccessKeyId && trimmedAwsSecretAccessKey),
+      );
+      if (type === 'aws' && hasPartialAwsCreds) {
+        addNotification({
+          type: 'danger',
+          message:
+            'Enter both AWS Access Key ID and Secret Access Key, or leave both blank.',
+        });
+        return;
       }
 
       if (
@@ -797,9 +823,35 @@ export default function ProviderDetailsModal({
         : await createProvider(trimmedName, type, parsedConfig, forceRefresh);
 
       if (response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const savedProviderId = providerId || String(data?.id || '');
+
+        if (type === 'aws' && hasAwsCreds) {
+          if (!savedProviderId) {
+            addNotification({
+              type: 'danger',
+              message:
+                'Provider was saved, but could not determine provider ID to save AWS credentials.',
+            });
+            return;
+          }
+          const awsCredsResponse = await saveAwsCredentials(
+            savedProviderId,
+            trimmedAwsAccessKeyId,
+            trimmedAwsSecretAccessKey,
+          );
+          if (!awsCredsResponse.ok) {
+            addNotification({
+              type: 'danger',
+              message:
+                'Provider was saved, but saving AWS credentials failed. Open the provider and try again.',
+            });
+            return;
+          }
+        }
+
         // For newly created LOCAL providers, keep the modal open and show setup progress.
         if (!providerId && type === 'local') {
-          const data = await response.json().catch(() => ({}));
           const newId = String(data?.id || '');
           if (newId) {
             pollLocalSetupStatus(newId);
@@ -1347,111 +1399,50 @@ export default function ProviderDetailsModal({
                             level="body-sm"
                             sx={{ mt: 0.5, color: 'text.tertiary' }}
                           >
-                            Configure this profile in your AWS CLI or use the
-                            section below.
+                            Credentials entered below are saved to this profile
+                            when you click Save.
                           </Typography>
                         </FormControl>
                       ) : null;
                     })()}
 
-                  {providerId && (
-                    <Box sx={{ mt: 1 }}>
-                      <Button
-                        variant="plain"
-                        size="sm"
-                        onClick={() => setAwsCredsExpanded((v) => !v)}
-                        endDecorator={
-                          awsCredsExpanded ? (
-                            <ChevronDownIcon size={14} />
-                          ) : (
-                            <ChevronRightIcon size={14} />
-                          )
+                  <Box
+                    sx={{
+                      mt: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 1,
+                    }}
+                  >
+                    <FormControl>
+                      <FormLabel>Access Key ID</FormLabel>
+                      <Input
+                        value={awsAccessKeyId}
+                        onChange={(e) => setAwsAccessKeyId(e.currentTarget.value)}
+                        placeholder="AKIA..."
+                        fullWidth
+                      />
+                    </FormControl>
+                    <FormControl>
+                      <FormLabel>Secret Access Key</FormLabel>
+                      <Input
+                        value={awsSecretAccessKey}
+                        onChange={(e) =>
+                          setAwsSecretAccessKey(e.currentTarget.value)
                         }
-                        sx={{ pl: 0 }}
-                      >
-                        Configure AWS Credentials
-                      </Button>
-                      {awsCredsExpanded && (
-                        <Box
-                          sx={{
-                            mt: 1,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 1,
-                          }}
-                        >
-                          <FormControl>
-                            <FormLabel>Access Key ID</FormLabel>
-                            <Input
-                              value={awsAccessKeyId}
-                              onChange={(e) =>
-                                setAwsAccessKeyId(e.currentTarget.value)
-                              }
-                              placeholder="AKIA..."
-                              fullWidth
-                            />
-                          </FormControl>
-                          <FormControl>
-                            <FormLabel>Secret Access Key</FormLabel>
-                            <Input
-                              value={awsSecretAccessKey}
-                              onChange={(e) =>
-                                setAwsSecretAccessKey(e.currentTarget.value)
-                              }
-                              type="password"
-                              placeholder="Your AWS secret access key"
-                              fullWidth
-                            />
-                          </FormControl>
-                          <Button
-                            size="sm"
-                            variant="outlined"
-                            loading={awsCredsSaving}
-                            color={awsCredsSaved ? 'success' : 'primary'}
-                            onClick={async () => {
-                              setAwsCredsSaving(true);
-                              try {
-                                const resp = await fetchWithAuth(
-                                  Endpoints.ComputeProvider.AwsCredentials(
-                                    providerId,
-                                  ),
-                                  {
-                                    method: 'POST',
-                                    headers: {
-                                      'Content-Type': 'application/json',
-                                    },
-                                    body: JSON.stringify({
-                                      access_key_id: awsAccessKeyId,
-                                      secret_access_key: awsSecretAccessKey,
-                                    }),
-                                  },
-                                );
-                                if (resp.ok) {
-                                  setAwsCredsSaved(true);
-                                  addNotification({
-                                    type: 'success',
-                                    message: 'AWS credentials saved.',
-                                  });
-                                } else {
-                                  addNotification({
-                                    type: 'danger',
-                                    message: 'Failed to save AWS credentials.',
-                                  });
-                                }
-                              } finally {
-                                setAwsCredsSaving(false);
-                              }
-                            }}
-                            sx={{ alignSelf: 'flex-start' }}
-                          >
-                            {awsCredsSaved
-                              ? 'Credentials Saved'
-                              : 'Save Credentials'}
-                          </Button>
-                        </Box>
-                      )}
-                    </Box>
-                  )}
+                        type="password"
+                        placeholder="Your AWS secret access key"
+                        fullWidth
+                      />
+                    </FormControl>
+                    <Typography
+                      level="body-sm"
+                      sx={{ mt: 0.5, color: 'text.tertiary' }}
+                    >
+                      Optional. If provided, credentials are saved along with the
+                      provider when you click Save.
+                    </Typography>
+                  </Box>
                 </>
               )}
 

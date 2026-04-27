@@ -137,3 +137,78 @@ def test_save_aws_credentials_endpoint():
         ))
 
         mock_write.assert_called_once_with("transformerlab-compute-team-abc", "AKIATEST", "mysecret")
+
+
+def test_update_aws_provider_reinjects_profile_and_team_id_when_missing():
+    """update_provider_for_team must keep AWS config launchable even for legacy providers missing aws_profile."""
+    from transformerlab.services.compute_provider.team_provider_endpoints import update_provider_for_team
+
+    provider = MagicMock()
+    provider.id = "prov-aws"
+    provider.team_id = "team-xyz"
+    provider.name = "aws-provider"
+    provider.type = "aws"
+    provider.config = {"region": "us-east-1"}
+    provider.created_by_user_id = "user-1"
+    provider.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    provider.updated_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    provider.disabled = False
+    provider.is_default = False
+
+    class FakeConfig:
+        def model_dump(self, **kwargs):
+            return {"region": "us-west-2"}
+
+    provider_update = MagicMock()
+    provider_update.name = None
+    provider_update.config = FakeConfig()
+    provider_update.disabled = None
+    provider_update.is_default = None
+
+    captured = {}
+
+    async def fake_update_team_provider(session, provider, name, config, disabled, is_default):
+        captured.update(config or {})
+        provider.config = config
+        return provider
+
+    with patch(
+        "transformerlab.services.compute_provider.team_provider_endpoints.get_team_provider",
+        new_callable=AsyncMock,
+        return_value=provider,
+    ), patch(
+        "transformerlab.services.compute_provider.team_provider_endpoints.update_team_provider",
+        side_effect=fake_update_team_provider,
+    ), patch(
+        "transformerlab.services.compute_provider.team_provider_endpoints.cache.invalidate",
+        new_callable=AsyncMock,
+    ):
+        asyncio.run(
+            update_provider_for_team(
+                session=MagicMock(),
+                team_id="team-xyz",
+                provider_id="prov-aws",
+                provider_data=provider_update,
+            )
+        )
+
+    assert captured["region"] == "us-west-2"
+    assert captured["aws_profile"] == "transformerlab-compute-team-xyz"
+    assert captured["team_id"] == "team-xyz"
+
+
+def test_db_record_to_provider_config_backfills_missing_aws_fields():
+    """db_record_to_provider_config should make legacy AWS records instantiable."""
+    from transformerlab.services.provider_service import db_record_to_provider_config
+
+    record = MagicMock()
+    record.type = "aws"
+    record.name = "legacy-aws"
+    record.team_id = "team-legacy"
+    record.config = {"region": "us-west-2"}
+
+    cfg = db_record_to_provider_config(record)
+
+    assert cfg.aws_profile == "transformerlab-compute-team-legacy"
+    assert cfg.team_id == "team-legacy"
+    assert cfg.region == "us-west-2"

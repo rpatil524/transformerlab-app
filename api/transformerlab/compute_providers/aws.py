@@ -272,7 +272,6 @@ class AWSProvider(ComputeProvider):
 set -eo pipefail
 mkdir -p /workspace
 {env_exports}
-pip3 install transformerlab --quiet >> /workspace/install.log 2>&1
 {setup_block}
 ({run_cmd}) 2>&1 | tee /workspace/run_logs.txt
 """

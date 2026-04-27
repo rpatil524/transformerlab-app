@@ -197,6 +197,9 @@ async def update_provider_for_team(
         if new_config.get("api_key") == "***":
             new_config.pop("api_key", None)
         update_config = {**existing_config, **new_config}
+        if provider.type == ProviderType.AWS.value:
+            update_config.setdefault("aws_profile", f"transformerlab-compute-{team_id}")
+            update_config["team_id"] = team_id
 
     update_disabled = provider_data.disabled if provider_data.disabled is not None else None
     update_is_default = provider_data.is_default if provider_data.is_default is not None else None
