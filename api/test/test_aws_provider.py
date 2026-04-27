@@ -182,6 +182,33 @@ class TestLaunchCluster:
         assert tag_map["transformerlab-cluster-name"] == "my-cluster"
 
 
+class TestDeepLearningAmiLookup:
+    def test_uses_fallback_name_pattern_when_primary_has_no_results(self, provider):
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_images.side_effect = [
+            {"Images": []},
+            {"Images": [{"ImageId": "ami-fallback", "CreationDate": "2024-05-01T00:00:00Z"}]},
+        ]
+
+        ami_id = provider._get_latest_dl_ami(mock_ec2)
+
+        assert ami_id == "ami-fallback"
+        assert mock_ec2.describe_images.call_count == 2
+
+    def test_raises_when_no_patterns_match(self, provider):
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_images.return_value = {"Images": []}
+
+        with pytest.raises(RuntimeError, match="No Deep Learning AMI found"):
+            provider._get_latest_dl_ami(mock_ec2)
+
+
+class TestUserDataScript:
+    def test_sets_pip_break_system_packages_for_ubuntu24(self):
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))
+        assert "export PIP_BREAK_SYSTEM_PACKAGES=1" in user_data
+
+
 class TestStopCluster:
     def test_terminates_instance_by_cluster_name(self, provider):
         mock_ec2 = MagicMock()
