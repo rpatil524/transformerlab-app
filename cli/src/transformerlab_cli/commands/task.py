@@ -166,12 +166,16 @@ def add_task_from_directory(
             CHUNK_SIZE = 64 * 1024 * 1024  # mirrors api/transformerlab/services/upload_service.py
             total_chunks = math.ceil(zip_size / CHUNK_SIZE) or 1
             progress_task = progress.add_task("Uploading", total=total_chunks)
-            upload_id = chunked_upload.upload_one_file(
-                tmp_zip_path,
-                server_filename="task.zip",
-                progress=progress,
-                progress_task=progress_task,
-            )
+            try:
+                upload_id = chunked_upload.upload_one_file(
+                    tmp_zip_path,
+                    server_filename="task.zip",
+                    progress=progress,
+                    progress_task=progress_task,
+                )
+            except RuntimeError as exc:
+                console.print(f"[error]Error:[/error] {exc}")
+                raise typer.Exit(1)
 
         with console.status("[bold success]Creating task...[/bold success]", spinner="dots"):
             response = api.post_json(
