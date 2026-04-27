@@ -127,6 +127,94 @@ class TestEnsureKeyPair:
         mock_ec2.import_key_pair.assert_called_once()
 
 
+class TestEnsureIamInstanceProfile:
+    def _make_mock_iam(self, role_exists: bool = True, profile_exists: bool = True, role_in_profile: bool = True):
+        from botocore.exceptions import ClientError
+        mock_iam = MagicMock()
+
+        if role_exists:
+            mock_iam.get_role.return_value = {"Role": {"RoleName": "transformerlab-ec2-role-abc"}}
+        else:
+            mock_iam.get_role.side_effect = ClientError(
+                {"Error": {"Code": "NoSuchEntity", "Message": ""}}, "GetRole"
+            )
+            mock_iam.create_role.return_value = {"Role": {"RoleName": "transformerlab-ec2-role-abc"}}
+
+        if profile_exists:
+            roles_in_profile = [{"RoleName": "transformerlab-ec2-role-abc"}] if role_in_profile else []
+            mock_iam.get_instance_profile.return_value = {
+                "InstanceProfile": {
+                    "InstanceProfileName": "transformerlab-ec2-profile-abc",
+                    "Arn": "arn:aws:iam::123456789:instance-profile/transformerlab-ec2-profile-abc",
+                    "Roles": roles_in_profile,
+                }
+            }
+        else:
+            mock_iam.get_instance_profile.side_effect = ClientError(
+                {"Error": {"Code": "NoSuchEntity", "Message": ""}}, "GetInstanceProfile"
+            )
+            mock_iam.create_instance_profile.return_value = {
+                "InstanceProfile": {
+                    "InstanceProfileName": "transformerlab-ec2-profile-abc",
+                    "Arn": "arn:aws:iam::123456789:instance-profile/transformerlab-ec2-profile-abc",
+                    "Roles": [],
+                }
+            }
+
+        return mock_iam
+
+    def test_returns_existing_profile_arn_without_creating(self, provider):
+        mock_iam = self._make_mock_iam(role_exists=True, profile_exists=True, role_in_profile=True)
+        with patch.object(provider, "_get_iam_client", return_value=mock_iam):
+            arn = provider._ensure_iam_instance_profile()
+        assert arn.startswith("arn:aws:iam::")
+        assert "transformerlab-ec2-profile-abc" in arn
+        mock_iam.create_role.assert_not_called()
+        mock_iam.create_instance_profile.assert_not_called()
+        mock_iam.add_role_to_instance_profile.assert_not_called()
+        mock_iam.put_role_policy.assert_called_once()
+
+    def test_creates_role_when_missing(self, provider):
+        mock_iam = self._make_mock_iam(role_exists=False, profile_exists=True, role_in_profile=True)
+        with patch.object(provider, "_get_iam_client", return_value=mock_iam):
+            provider._ensure_iam_instance_profile()
+        mock_iam.create_role.assert_called_once()
+        call_kwargs = mock_iam.create_role.call_args[1]
+        assert "transformerlab-ec2-role-abc" in call_kwargs["RoleName"]
+
+    def test_creates_profile_when_missing(self, provider):
+        mock_iam = self._make_mock_iam(role_exists=True, profile_exists=False)
+        with patch.object(provider, "_get_iam_client", return_value=mock_iam):
+            provider._ensure_iam_instance_profile()
+        mock_iam.create_instance_profile.assert_called_once()
+
+    def test_adds_role_to_profile_when_not_already_attached(self, provider):
+        mock_iam = self._make_mock_iam(role_exists=True, profile_exists=True, role_in_profile=False)
+        with patch.object(provider, "_get_iam_client", return_value=mock_iam):
+            provider._ensure_iam_instance_profile()
+        mock_iam.add_role_to_instance_profile.assert_called_once()
+
+    def test_role_name_and_profile_name_include_team_id(self, provider):
+        mock_iam = self._make_mock_iam(role_exists=False, profile_exists=False)
+        with patch.object(provider, "_get_iam_client", return_value=mock_iam):
+            provider._ensure_iam_instance_profile()
+        role_name = mock_iam.create_role.call_args[1]["RoleName"]
+        profile_name = mock_iam.create_instance_profile.call_args[1]["InstanceProfileName"]
+        assert "abc" in role_name
+        assert "abc" in profile_name
+
+    def test_inline_policy_scoped_to_team_id(self, provider):
+        import json
+        mock_iam = self._make_mock_iam(role_exists=False, profile_exists=False)
+        with patch.object(provider, "_get_iam_client", return_value=mock_iam):
+            provider._ensure_iam_instance_profile()
+        call_kwargs = mock_iam.put_role_policy.call_args[1]
+        policy = json.loads(call_kwargs["PolicyDocument"])
+        stmt = policy["Statement"][0]
+        assert stmt["Action"] == "ec2:TerminateInstances"
+        assert stmt["Condition"]["StringEquals"]["ec2:ResourceTag/transformerlab-team-id"] == "abc"
+
+
 class TestLaunchCluster:
     def _make_mock_ec2(self):
         mock_ec2 = MagicMock()
@@ -144,6 +232,7 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
         ):
             result = provider.launch_cluster("my-cluster", ClusterConfig(run="python train.py"))
         assert result["instance_id"] == "i-0abc123"
@@ -154,6 +243,7 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
         ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py", disk_size=200))
         call_kwargs = mock_ec2.run_instances.call_args[1]
@@ -164,6 +254,7 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
         ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
         call_kwargs = mock_ec2.run_instances.call_args[1]
@@ -174,12 +265,65 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
         ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
         tags = mock_ec2.run_instances.call_args[1]["TagSpecifications"][0]["Tags"]
         tag_map = {t["Key"]: t["Value"] for t in tags}
         assert tag_map["transformerlab-team-id"] == "abc"
         assert tag_map["transformerlab-cluster-name"] == "my-cluster"
+
+    def test_attaches_iam_instance_profile(self, provider):
+        mock_ec2 = self._make_mock_ec2()
+        mock_ensure_iam = MagicMock(return_value="arn:aws:iam::123:instance-profile/transformerlab-ec2-profile-abc")
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(provider, "_ensure_iam_instance_profile", mock_ensure_iam),
+        ):
+            provider.launch_cluster("my-cluster", ClusterConfig(run="python train.py"))
+        call_kwargs = mock_ec2.run_instances.call_args[1]
+        assert call_kwargs["IamInstanceProfile"]["Arn"] == "arn:aws:iam::123:instance-profile/transformerlab-ec2-profile-abc"
+        mock_ensure_iam.assert_called_once()
+
+    def test_raises_runtime_error_when_iam_profile_fails(self, provider):
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=self._make_mock_ec2()),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(
+                provider,
+                "_ensure_iam_instance_profile",
+                side_effect=RuntimeError("IAM permission denied"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="IAM instance profile"):
+                provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
+
+    def test_retries_run_instances_on_iam_propagation_error(self, provider):
+        from botocore.exceptions import ClientError
+
+        mock_ec2 = self._make_mock_ec2()
+        propagation_error = ClientError(
+            {
+                "Error": {
+                    "Code": "InvalidParameterValue",
+                    "Message": "Value (arn:...) for parameter iamInstanceProfile.arn is invalid. Invalid IAM Instance Profile ARN",
+                }
+            },
+            "RunInstances",
+        )
+        # Fail once with propagation error, then succeed.
+        mock_ec2.run_instances.side_effect = [propagation_error, mock_ec2.run_instances.return_value]
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
+            patch("transformerlab.compute_providers.aws.time.sleep") as mock_sleep,
+        ):
+            result = provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
+        assert result["instance_id"] == "i-0abc123"
+        assert mock_ec2.run_instances.call_count == 2
+        mock_sleep.assert_called_once_with(10)
 
 
 class TestDeepLearningAmiLookup:
@@ -205,16 +349,40 @@ class TestDeepLearningAmiLookup:
 
 class TestUserDataScript:
     def test_bootstraps_dedicated_python_venv(self):
-        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"), region="us-east-1")
         assert "apt-get install -y -qq python3 python3-venv python3-pip" in user_data
         assert "python3 -m venv /opt/transformerlab-venv" in user_data
         assert 'export PATH="/opt/transformerlab-venv/bin:$PATH"' in user_data
 
     def test_installs_uv_and_exports_path(self):
-        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"), region="us-east-1")
         assert "curl -LsSf https://astral.sh/uv/install.sh | sh" in user_data
         assert 'export PATH="$HOME/.local/bin:/root/.local/bin:/home/ubuntu/.local/bin:$PATH"' in user_data
         assert "cp /root/.local/bin/uv /usr/local/bin/uv && chmod +x /usr/local/bin/uv" in user_data
+
+    def test_includes_self_termination_trap(self):
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"), region="us-east-1")
+        assert "trap" in user_data
+        assert "_tfl_self_terminate" in user_data
+
+    def test_self_termination_uses_imdsv2(self):
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"), region="us-east-1")
+        assert "169.254.169.254/latest/api/token" in user_data
+        assert "169.254.169.254/latest/meta-data/instance-id" in user_data
+
+    def test_self_termination_uses_correct_region(self):
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"), region="eu-west-1")
+        assert "eu-west-1" in user_data
+
+    def test_trap_fires_on_exit_not_only_success(self):
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"), region="us-east-1")
+        assert "trap _tfl_self_terminate EXIT" in user_data
+
+    def test_self_termination_aws_call_suppresses_errors(self):
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"), region="us-east-1")
+        term_lines = [line for line in user_data.splitlines() if "terminate-instances" in line]
+        assert len(term_lines) == 1
+        assert "|| true" in term_lines[0]
 
 
 class TestStopCluster:

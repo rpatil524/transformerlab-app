@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import time
 from typing import Any, Dict, List, Optional, Union
 
 from .base import ComputeProvider
@@ -198,6 +200,9 @@ class AWSProvider(ComputeProvider):
     def _get_sts_client(self):
         return self._get_boto3_session().client("sts")
 
+    def _get_iam_client(self):
+        return self._get_boto3_session().client("iam")
+
     def check(self) -> bool:
         try:
             self._get_sts_client().get_caller_identity()
@@ -244,6 +249,83 @@ class AWSProvider(ComputeProvider):
         ec2.import_key_pair(KeyName=key_name, PublicKeyMaterial=public_key_bytes)
         return key_name
 
+    def _ensure_iam_instance_profile(self) -> str:
+        """Idempotently create IAM role + scoped policy + instance profile for EC2 self-termination.
+
+        Returns the instance profile ARN.
+        """
+        from botocore.exceptions import ClientError
+
+        iam = self._get_iam_client()
+        role_name = f"transformerlab-ec2-role-{self.team_id}"
+        profile_name = f"transformerlab-ec2-profile-{self.team_id}"
+
+        trust_policy = json.dumps(
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"Service": "ec2.amazonaws.com"},
+                        "Action": "sts:AssumeRole",
+                    }
+                ],
+            }
+        )
+        terminate_policy = json.dumps(
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": "ec2:TerminateInstances",
+                        "Resource": "arn:aws:ec2:*:*:instance/*",
+                        "Condition": {"StringEquals": {"ec2:ResourceTag/transformerlab-team-id": self.team_id}},
+                    }
+                ],
+            }
+        )
+
+        # Ensure role exists.
+        try:
+            iam.get_role(RoleName=role_name)
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "NoSuchEntity":
+                raise
+            iam.create_role(
+                RoleName=role_name,
+                AssumeRolePolicyDocument=trust_policy,
+                Description=f"TransformerLab EC2 self-termination role for team {self.team_id}",
+            )
+
+        # Ensure inline policy is attached to the role.
+        iam.put_role_policy(
+            RoleName=role_name,
+            PolicyName="tfl-ec2-self-terminate",
+            PolicyDocument=terminate_policy,
+        )
+
+        # Ensure instance profile exists.
+        try:
+            response = iam.get_instance_profile(InstanceProfileName=profile_name)
+            profile_arn: str = response["InstanceProfile"]["Arn"]
+            existing_roles = [r["RoleName"] for r in response["InstanceProfile"]["Roles"]]
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "NoSuchEntity":
+                raise
+            response = iam.create_instance_profile(InstanceProfileName=profile_name)
+            profile_arn = response["InstanceProfile"]["Arn"]
+            existing_roles = []
+
+        # Attach role to profile if not already attached.
+        if role_name not in existing_roles:
+            iam.add_role_to_instance_profile(
+                InstanceProfileName=profile_name,
+                RoleName=role_name,
+            )
+
+        return profile_arn
+
     def _get_latest_dl_ami(self, ec2) -> str:
         # AWS occasionally changes DLAMI naming. Try multiple known patterns.
         name_patterns = [
@@ -274,13 +356,28 @@ class AWSProvider(ComputeProvider):
         return _resolve_cpu_instance_type(config.cpus, config.memory)
 
     @staticmethod
-    def _build_user_data(config: ClusterConfig) -> str:
+    def _build_user_data(config: ClusterConfig, region: str) -> str:
         env_exports = "\n".join(f'export {k}="{v}"' for k, v in config.env_vars.items())
         setup_block = config.setup or ""
         run_cmd = config.run or ""
         return f"""#!/bin/bash
 set -eo pipefail
 mkdir -p /workspace
+
+# Self-terminate on EXIT (success or crash) using IMDSv2.
+_tfl_self_terminate() {{
+  local _token _iid
+  _token=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null) || true
+  _iid=$(curl -sf -H "X-aws-ec2-metadata-token: $_token" \
+    "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null) || true
+  if [ -n "$_iid" ]; then
+    aws ec2 terminate-instances --instance-ids "$_iid" --region "{region}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}}
+trap _tfl_self_terminate EXIT
+
 # Ensure Python tooling is available and use an isolated runtime for setup/run.
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv python3-pip >/dev/null 2>&1
@@ -330,7 +427,11 @@ if [ -x /root/.local/bin/uvx ]; then cp /root/.local/bin/uvx /usr/local/bin/uvx 
         public_key_str = asyncio.run(_ensure_and_get_public_key())
         key_name = self._ensure_key_pair(ec2, public_key_str.encode("utf-8"))
         ami_id = self._get_latest_dl_ami(ec2)
-        user_data = self._build_user_data(config)
+        try:
+            profile_arn = self._ensure_iam_instance_profile()
+        except Exception as e:
+            raise RuntimeError(f"Failed to ensure IAM instance profile: {e}") from e
+        user_data = self._build_user_data(config, region=self.region)
 
         launch_params: Dict[str, Any] = {
             "ImageId": ami_id,
@@ -339,6 +440,7 @@ if [ -x /root/.local/bin/uvx ]; then cp /root/.local/bin/uvx /usr/local/bin/uvx 
             "MaxCount": 1,
             "KeyName": key_name,
             "SecurityGroupIds": [sg_id],
+            "IamInstanceProfile": {"Arn": profile_arn},
             "UserData": user_data,
             "TagSpecifications": [
                 {
@@ -360,12 +462,25 @@ if [ -x /root/.local/bin/uvx ]; then cp /root/.local/bin/uvx /usr/local/bin/uvx 
                 }
             ]
 
-        try:
-            response = ec2.run_instances(**launch_params)
-            instance_id = response["Instances"][0]["InstanceId"]
-            return {"instance_id": instance_id, "request_id": instance_id}
-        except Exception as e:
-            raise RuntimeError(f"Failed to launch EC2 instance: {e}") from e
+        # IAM instance profiles are eventually consistent. Retry on the specific
+        # propagation error so freshly-created profiles don't cause launch failures.
+        _IAM_PROPAGATION_RETRIES = 5
+        _IAM_PROPAGATION_DELAY_S = 10
+        for attempt in range(_IAM_PROPAGATION_RETRIES):
+            try:
+                response = ec2.run_instances(**launch_params)
+                instance_id = response["Instances"][0]["InstanceId"]
+                return {"instance_id": instance_id, "request_id": instance_id}
+            except Exception as e:
+                is_iam_propagation = (
+                    hasattr(e, "response")
+                    and e.response.get("Error", {}).get("Code") == "InvalidParameterValue"
+                    and "iamInstanceProfile" in e.response.get("Error", {}).get("Message", "")
+                )
+                if is_iam_propagation and attempt < _IAM_PROPAGATION_RETRIES - 1:
+                    time.sleep(_IAM_PROPAGATION_DELAY_S)
+                    continue
+                raise RuntimeError(f"Failed to launch EC2 instance: {e}") from e
 
     def stop_cluster(self, cluster_name: str) -> Dict[str, Any]:
         ec2 = self._get_ec2_client()
