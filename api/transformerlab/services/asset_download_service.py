@@ -4,6 +4,7 @@
 `stream_file` returns a StreamingResponse honoring HTTP Range for resume.
 """
 
+import os
 import re
 from typing import Optional
 
@@ -11,6 +12,7 @@ from fastapi import Response
 from fastapi.responses import StreamingResponse
 
 from lab import storage
+from lab.storage import is_remote_path
 
 
 class InvalidRelpathError(ValueError):
@@ -64,19 +66,30 @@ async def list_files(asset_dir: str) -> list[dict]:
     """Return [{relpath, size}, ...] for every regular file under asset_dir.
 
     Raises FileNotFoundError if the directory doesn't exist.
+
+    Handles three cases robustly:
+      - absolute local paths (tmp_path in tests, production paths)
+      - relative local paths (when TFL_HOME_DIR is relative, as in tests)
+      - remote URIs (s3://, gs://, abfs://, etc.)
     """
     if not await storage.isdir(asset_dir):
         raise FileNotFoundError(asset_dir)
 
-    base_prefix = asset_dir.rstrip("/") + "/"
+    if is_remote_path(asset_dir):
+        normalized_dir = asset_dir.rstrip("/")
+    else:
+        normalized_dir = os.path.realpath(asset_dir)
+
     results: list[dict] = []
     async for full, size in _walk_with_sizes(asset_dir):
-        # Normalise relpath to posix, relative to asset_dir.
-        rel = full
-        if rel.startswith(base_prefix):
-            rel = rel[len(base_prefix) :]
-        elif rel == asset_dir:
+        if is_remote_path(full):
+            full_norm = full
+        else:
+            full_norm = os.path.realpath(full)
+        prefix = normalized_dir.rstrip("/") + "/"
+        if not full_norm.startswith(prefix):
             continue
+        rel = full_norm[len(prefix) :]
         rel = rel.replace("\\", "/")
         results.append({"relpath": rel, "size": size})
     return results

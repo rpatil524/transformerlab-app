@@ -1,4 +1,3 @@
-import os
 from typing import Annotated
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from huggingface_hub import HfApi
@@ -276,7 +275,7 @@ async def model_files(model_id: str):
         model_obj = await Model.get(model_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"model {model_id} not found")
-    asset_dir = os.path.abspath(await model_obj.get_dir())
+    asset_dir = await model_obj.get_dir()
     return await asset_download_service.list_files(asset_dir)
 
 
@@ -290,7 +289,7 @@ async def model_file(
         model_obj = await Model.get(model_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"model {model_id} not found")
-    asset_dir = os.path.abspath(await model_obj.get_dir())
+    asset_dir = await model_obj.get_dir()
     try:
         return await asset_download_service.stream_file(asset_dir, relpath, range)
     except asset_download_service.InvalidRelpathError as exc:
