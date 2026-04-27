@@ -1,4 +1,5 @@
 import json
+import os
 
 import typer
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
@@ -7,7 +8,7 @@ import transformerlab_cli.util.api as api
 from transformerlab_cli.state import cli_state
 from transformerlab_cli.util.config import check_configs
 from transformerlab_cli.util.ui import console, render_table, render_object
-from transformerlab_cli.util import asset_paths, chunked_upload
+from transformerlab_cli.util import asset_paths, chunked_download, chunked_upload
 
 app = typer.Typer()
 
@@ -292,3 +293,55 @@ def command_model_upload(
         raise typer.Exit(1)
     if skipped:
         raise typer.Exit(2)
+
+
+# ──────────────────────────────────────────────
+# download
+# ──────────────────────────────────────────────
+
+
+@app.command("download")
+def command_model_download(
+    model_id: str = typer.Argument(..., help="The model ID on the server."),
+    dest_dir: str = typer.Argument(..., help="Local destination directory (will be created)."),
+):
+    """Download a model from the server to local disk under <dest>/<model_id>/."""
+    check_configs(output_format=cli_state.output_format)
+
+    list_resp = api.get(f"/model/files?model_id={model_id}")
+    if list_resp.status_code != 200:
+        console.print(f"[error]Error:[/error] {_extract_error(list_resp)}")
+        raise typer.Exit(1)
+    files = list_resp.json()
+    if not files:
+        console.print("[warning]Model has no files to download.[/warning]")
+        return
+
+    base = os.path.join(dest_dir, model_id)
+    os.makedirs(base, exist_ok=True)
+    total_bytes = sum(f["size"] for f in files)
+
+    with Progress(
+        TextColumn("[bold success]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+    ) as progress:
+        bar = progress.add_task(f"Downloading {model_id}", total=total_bytes)
+        for f in files:
+            relpath = f["relpath"]
+            size = f["size"]
+            target = os.path.join(base, *relpath.split("/"))
+            try:
+                chunked_download.download_one_file(
+                    f"/model/file?model_id={model_id}&relpath={relpath}",
+                    target_path=target,
+                    server_size=size,
+                    progress=progress,
+                    progress_task=bar,
+                )
+            except Exception as exc:
+                console.print(f"[error]Failed to download {relpath}: {exc}")
+                raise typer.Exit(1)
+
+    console.print(f"[success]✓[/success] Downloaded {len(files)} file(s) to {base}.")
