@@ -204,9 +204,11 @@ class TestDeepLearningAmiLookup:
 
 
 class TestUserDataScript:
-    def test_sets_pip_break_system_packages_for_ubuntu24(self):
+    def test_bootstraps_dedicated_python_venv(self):
         user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))
-        assert "export PIP_BREAK_SYSTEM_PACKAGES=1" in user_data
+        assert "apt-get install -y -qq python3 python3-venv python3-pip" in user_data
+        assert "python3 -m venv /opt/transformerlab-venv" in user_data
+        assert 'export PATH="/opt/transformerlab-venv/bin:$PATH"' in user_data
 
     def test_installs_uv_and_exports_path(self):
         user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))

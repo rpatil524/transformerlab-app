@@ -281,9 +281,11 @@ class AWSProvider(ComputeProvider):
         return f"""#!/bin/bash
 set -eo pipefail
 mkdir -p /workspace
-# Ubuntu 24+ marks system Python as externally managed (PEP 668).
-# Allow bootstrap pip installs used by remote setup commands.
-export PIP_BREAK_SYSTEM_PACKAGES=1
+# Ensure Python tooling is available and use an isolated runtime for setup/run.
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-venv python3-pip >/dev/null 2>&1
+python3 -m venv /opt/transformerlab-venv
+export PATH="/opt/transformerlab-venv/bin:$PATH"
 # Install uv for task setups that use `uv pip ...`.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:/root/.local/bin:/home/ubuntu/.local/bin:$PATH"

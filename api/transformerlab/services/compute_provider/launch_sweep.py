@@ -220,7 +220,7 @@ async def launch_sweep_jobs(
                 if tfl_storage_uri:
                     env_vars["TFL_STORAGE_URI"] = tfl_storage_uri
 
-                if provider.type in (ProviderType.RUNPOD.value, ProviderType.AWS.value):
+                if provider.type == ProviderType.RUNPOD.value:
                     env_vars["UV_SYSTEM_PYTHON"] = "1"
 
                 if provider.type == ProviderType.LOCAL.value and team_id:

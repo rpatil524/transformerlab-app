@@ -270,9 +270,8 @@ async def launch_template_on_provider(
             setup_commands.append("pip install -q torch")
     if request.file_mounts is True and request.task_id:
         setup_commands.append(COPY_FILE_MOUNTS_SETUP)
-    # For RunPod/AWS providers, tell uv to use system Python.
-    # This allows user commands to invoke `uv` directly without a dedicated venv.
-    if provider.type in (ProviderType.RUNPOD.value, ProviderType.AWS.value):
+    # For RunPod providers, tell uv to use system Python.
+    if provider.type == ProviderType.RUNPOD.value:
         env_vars["UV_SYSTEM_PYTHON"] = "1"
     # RunPod still needs explicit uv install in setup. AWS bootstrap handles it in user-data.
     if provider.type == ProviderType.RUNPOD.value:
