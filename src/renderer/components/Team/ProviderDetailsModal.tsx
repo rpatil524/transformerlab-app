@@ -1264,7 +1264,7 @@ export default function ProviderDetailsModal({
                   }}
                   disabled={loading || isSetupInProgress}
                 >
-                  Back to provider type selection
+                  Change Provider Type
                 </Button>
               ) : null}
               <Button variant="outlined" onClick={onClose}>
