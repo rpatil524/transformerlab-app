@@ -931,23 +931,7 @@ export default function ProviderDetailsModal({
             </Box>
           ) : (
             <>
-              <FormControl required error={!!nameError} sx={{ mt: 2 }}>
-                <FormLabel>Compute Provider Name</FormLabel>
-                <Input
-                  value={name}
-                  onChange={(event) => {
-                    setName(event.currentTarget.value);
-                    setNameError(null);
-                  }}
-                  placeholder="Enter friendly name for compute provider"
-                  fullWidth
-                  color={nameError ? 'danger' : undefined}
-                />
-                {nameError ? (
-                  <FormHelperText>{nameError}</FormHelperText>
-                ) : null}
-              </FormControl>
-              <FormControl sx={{ mt: 1 }}>
+              <FormControl sx={{ mt: 2 }}>
                 <FormLabel>Compute Provider Type</FormLabel>
                 <Select
                   value={type}
@@ -972,6 +956,22 @@ export default function ProviderDetailsModal({
                     Provider type cannot be changed after creation
                   </Typography>
                 )}
+              </FormControl>
+              <FormControl required error={!!nameError} sx={{ mt: 1 }}>
+                <FormLabel>Compute Provider Name</FormLabel>
+                <Input
+                  value={name}
+                  onChange={(event) => {
+                    setName(event.currentTarget.value);
+                    setNameError(null);
+                  }}
+                  placeholder="Enter friendly name for compute provider"
+                  fullWidth
+                  color={nameError ? 'danger' : undefined}
+                />
+                {nameError ? (
+                  <FormHelperText>{nameError}</FormHelperText>
+                ) : null}
               </FormControl>
 
               {type === 'local' && !providerId && (
@@ -1440,13 +1440,6 @@ export default function ProviderDetailsModal({
                         fullWidth
                       />
                     </FormControl>
-                    <Typography
-                      level="body-sm"
-                      sx={{ mt: 0.5, color: 'text.tertiary' }}
-                    >
-                      Optional. If provided, credentials are saved along with
-                      the provider when you click Save.
-                    </Typography>
                   </Box>
                 </>
               )}
