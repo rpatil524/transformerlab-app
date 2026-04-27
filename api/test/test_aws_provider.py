@@ -85,9 +85,7 @@ class TestCheck:
 class TestEnsureSecurityGroup:
     def test_returns_existing_group_id(self, provider):
         mock_ec2 = MagicMock()
-        mock_ec2.describe_security_groups.return_value = {
-            "SecurityGroups": [{"GroupId": "sg-existing123"}]
-        }
+        mock_ec2.describe_security_groups.return_value = {"SecurityGroups": [{"GroupId": "sg-existing123"}]}
         result = provider._ensure_security_group(mock_ec2)
         assert result == "sg-existing123"
         mock_ec2.create_security_group.assert_not_called()
@@ -120,6 +118,7 @@ class TestEnsureKeyPair:
     def test_imports_key_when_missing(self, provider):
         mock_ec2 = MagicMock()
         from botocore.exceptions import ClientError
+
         mock_ec2.describe_key_pairs.side_effect = ClientError(
             {"Error": {"Code": "InvalidKeyPair.NotFound", "Message": ""}}, "DescribeKeyPairs"
         )
@@ -136,40 +135,46 @@ class TestLaunchCluster:
         mock_ec2.describe_images.return_value = {
             "Images": [{"ImageId": "ami-0123456789", "CreationDate": "2024-01-01T00:00:00Z"}]
         }
-        mock_ec2.run_instances.return_value = {
-            "Instances": [{"InstanceId": "i-0abc123"}]
-        }
+        mock_ec2.run_instances.return_value = {"Instances": [{"InstanceId": "i-0abc123"}]}
         return mock_ec2
 
     def test_returns_instance_id(self, provider):
         mock_ec2 = self._make_mock_ec2()
         # get_org_ssh_public_key returns str; .encode() is called on it inside launch_cluster
-        with patch.object(provider, "_get_ec2_client", return_value=mock_ec2), \
-             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"):
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+        ):
             result = provider.launch_cluster("my-cluster", ClusterConfig(run="python train.py"))
         assert result["instance_id"] == "i-0abc123"
         assert result["request_id"] == "i-0abc123"
 
     def test_passes_disk_size_to_block_device(self, provider):
         mock_ec2 = self._make_mock_ec2()
-        with patch.object(provider, "_get_ec2_client", return_value=mock_ec2), \
-             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"):
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+        ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py", disk_size=200))
         call_kwargs = mock_ec2.run_instances.call_args[1]
         assert call_kwargs["BlockDeviceMappings"][0]["Ebs"]["VolumeSize"] == 200
 
     def test_no_block_device_when_disk_size_not_set(self, provider):
         mock_ec2 = self._make_mock_ec2()
-        with patch.object(provider, "_get_ec2_client", return_value=mock_ec2), \
-             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"):
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+        ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
         call_kwargs = mock_ec2.run_instances.call_args[1]
         assert "BlockDeviceMappings" not in call_kwargs
 
     def test_tags_include_team_id_and_cluster_name(self, provider):
         mock_ec2 = self._make_mock_ec2()
-        with patch.object(provider, "_get_ec2_client", return_value=mock_ec2), \
-             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"):
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+        ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
         tags = mock_ec2.run_instances.call_args[1]["TagSpecifications"][0]["Tags"]
         tag_map = {t["Key"]: t["Value"] for t in tags}
@@ -181,9 +186,7 @@ class TestStopCluster:
     def test_terminates_instance_by_cluster_name(self, provider):
         mock_ec2 = MagicMock()
         mock_ec2.describe_instances.return_value = {
-            "Reservations": [{
-                "Instances": [{"InstanceId": "i-0abc123", "State": {"Name": "running"}}]
-            }]
+            "Reservations": [{"Instances": [{"InstanceId": "i-0abc123", "State": {"Name": "running"}}]}]
         }
         with patch.object(provider, "_get_ec2_client", return_value=mock_ec2):
             result = provider.stop_cluster("my-cluster")
@@ -201,15 +204,20 @@ class TestStopCluster:
 class TestGetClusterStatus:
     def test_maps_running_to_up(self, provider):
         from transformerlab.compute_providers.models import ClusterState
+
         mock_ec2 = MagicMock()
         mock_ec2.describe_instances.return_value = {
-            "Reservations": [{
-                "Instances": [{
-                    "InstanceId": "i-0abc123",
-                    "State": {"Name": "running"},
-                    "PublicIpAddress": "1.2.3.4",
-                }]
-            }]
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-0abc123",
+                            "State": {"Name": "running"},
+                            "PublicIpAddress": "1.2.3.4",
+                        }
+                    ]
+                }
+            ]
         }
         with patch.object(provider, "_get_ec2_client", return_value=mock_ec2):
             status = provider.get_cluster_status("my-cluster")
@@ -217,11 +225,10 @@ class TestGetClusterStatus:
 
     def test_maps_terminated_to_down(self, provider):
         from transformerlab.compute_providers.models import ClusterState
+
         mock_ec2 = MagicMock()
         mock_ec2.describe_instances.return_value = {
-            "Reservations": [{
-                "Instances": [{"InstanceId": "i-0abc123", "State": {"Name": "terminated"}}]
-            }]
+            "Reservations": [{"Instances": [{"InstanceId": "i-0abc123", "State": {"Name": "terminated"}}]}]
         }
         with patch.object(provider, "_get_ec2_client", return_value=mock_ec2):
             status = provider.get_cluster_status("my-cluster")
@@ -229,6 +236,7 @@ class TestGetClusterStatus:
 
     def test_returns_unknown_when_not_found(self, provider):
         from transformerlab.compute_providers.models import ClusterState
+
         mock_ec2 = MagicMock()
         mock_ec2.describe_instances.return_value = {"Reservations": []}
         with patch.object(provider, "_get_ec2_client", return_value=mock_ec2):
@@ -238,11 +246,19 @@ class TestGetClusterStatus:
 
 class TestGetJobLogs:
     def test_returns_log_content_via_ssh(self, provider):
-        with patch("transformerlab.compute_providers.aws.asyncio.run", return_value=b"PRIVATE_KEY"), \
-             patch("transformerlab.compute_providers.aws._ssh_read_file", return_value="training loss: 0.5"):
+        with (
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value=b"PRIVATE_KEY"),
+            patch("transformerlab.compute_providers.aws._ssh_read_file", return_value="training loss: 0.5"),
+        ):
             mock_ec2 = MagicMock()
             mock_ec2.describe_instances.return_value = {
-                "Reservations": [{"Instances": [{"InstanceId": "i-0abc", "State": {"Name": "running"}, "PublicIpAddress": "1.2.3.4"}]}]
+                "Reservations": [
+                    {
+                        "Instances": [
+                            {"InstanceId": "i-0abc", "State": {"Name": "running"}, "PublicIpAddress": "1.2.3.4"}
+                        ]
+                    }
+                ]
             }
             with patch.object(provider, "_get_ec2_client", return_value=mock_ec2):
                 logs = provider.get_job_logs("my-cluster", "job-1")
@@ -260,16 +276,20 @@ class TestListClusters:
     def test_returns_cluster_statuses(self, provider):
         mock_ec2 = MagicMock()
         mock_ec2.describe_instances.return_value = {
-            "Reservations": [{
-                "Instances": [{
-                    "InstanceId": "i-0abc",
-                    "State": {"Name": "running"},
-                    "Tags": [
-                        {"Key": "transformerlab-cluster-name", "Value": "cluster-1"},
-                        {"Key": "transformerlab-team-id", "Value": "abc"},
-                    ],
-                }]
-            }]
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-0abc",
+                            "State": {"Name": "running"},
+                            "Tags": [
+                                {"Key": "transformerlab-cluster-name", "Value": "cluster-1"},
+                                {"Key": "transformerlab-team-id", "Value": "abc"},
+                            ],
+                        }
+                    ]
+                }
+            ]
         }
         with patch.object(provider, "_get_ec2_client", return_value=mock_ec2):
             clusters = provider.list_clusters()

@@ -86,27 +86,34 @@ def test_create_aws_provider_injects_aws_profile_and_team_id():
     provider_data.name = "my-aws"
     provider_data.config = FakeConfig()
 
-    with patch(
-        "transformerlab.services.compute_provider.team_provider_endpoints.create_team_provider",
-        side_effect=fake_create_team_provider,
-    ), patch(
-        "transformerlab.services.compute_provider.team_provider_endpoints.list_team_providers",
-        new_callable=AsyncMock,
-        return_value=[],
-    ), patch(
-        "transformerlab.services.compute_provider.team_provider_endpoints.cache.invalidate",
-        new_callable=AsyncMock,
-    ), patch(
-        "transformerlab.services.compute_provider.team_provider_endpoints.get_provider_read",
-        new_callable=AsyncMock,
+    with (
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.create_team_provider",
+            side_effect=fake_create_team_provider,
+        ),
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.list_team_providers",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.cache.invalidate",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.get_provider_read",
+            new_callable=AsyncMock,
+        ),
     ):
-        asyncio.run(create_provider_for_team(
-            session=MagicMock(),
-            team_id="team-xyz",
-            user=MagicMock(id="user-1"),
-            provider_data=provider_data,
-            force_refresh=False,
-        ))
+        asyncio.run(
+            create_provider_for_team(
+                session=MagicMock(),
+                team_id="team-xyz",
+                user=MagicMock(id="user-1"),
+                provider_data=provider_data,
+                force_refresh=False,
+            )
+        )
 
     assert captured_config["aws_profile"] == "transformerlab-compute-team-xyz"
     assert captured_config["team_id"] == "team-xyz"
@@ -118,23 +125,27 @@ def test_save_aws_credentials_endpoint():
     mock_provider.type = "aws"
     mock_provider.config = {"aws_profile": "transformerlab-compute-team-abc"}
 
-    with patch(
-        "transformerlab.routers.compute_provider.providers.get_team_provider",
-        new_callable=AsyncMock,
-        return_value=mock_provider,
-    ), patch(
-        "transformerlab.routers.compute_provider.providers.write_aws_credentials_to_profile"
-    ) as mock_write:
+    with (
+        patch(
+            "transformerlab.routers.compute_provider.providers.get_team_provider",
+            new_callable=AsyncMock,
+            return_value=mock_provider,
+        ),
+        patch("transformerlab.routers.compute_provider.providers.write_aws_credentials_to_profile") as mock_write,
+    ):
         from transformerlab.routers.compute_provider.providers import AwsCredentialsRequest, set_aws_credentials
+
         mock_session = MagicMock()
         mock_owner_info = {"team_id": "team-abc"}
 
-        asyncio.run(set_aws_credentials(
-            provider_id="prov-123",
-            body=AwsCredentialsRequest(access_key_id="AKIATEST", secret_access_key="mysecret"),
-            owner_info=mock_owner_info,
-            session=mock_session,
-        ))
+        asyncio.run(
+            set_aws_credentials(
+                provider_id="prov-123",
+                body=AwsCredentialsRequest(access_key_id="AKIATEST", secret_access_key="mysecret"),
+                owner_info=mock_owner_info,
+                session=mock_session,
+            )
+        )
 
         mock_write.assert_called_once_with("transformerlab-compute-team-abc", "AKIATEST", "mysecret")
 
@@ -172,16 +183,20 @@ def test_update_aws_provider_reinjects_profile_and_team_id_when_missing():
         provider.config = config
         return provider
 
-    with patch(
-        "transformerlab.services.compute_provider.team_provider_endpoints.get_team_provider",
-        new_callable=AsyncMock,
-        return_value=provider,
-    ), patch(
-        "transformerlab.services.compute_provider.team_provider_endpoints.update_team_provider",
-        side_effect=fake_update_team_provider,
-    ), patch(
-        "transformerlab.services.compute_provider.team_provider_endpoints.cache.invalidate",
-        new_callable=AsyncMock,
+    with (
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.get_team_provider",
+            new_callable=AsyncMock,
+            return_value=provider,
+        ),
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.update_team_provider",
+            side_effect=fake_update_team_provider,
+        ),
+        patch(
+            "transformerlab.services.compute_provider.team_provider_endpoints.cache.invalidate",
+            new_callable=AsyncMock,
+        ),
     ):
         asyncio.run(
             update_provider_for_team(

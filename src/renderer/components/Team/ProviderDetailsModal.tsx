@@ -722,16 +722,19 @@ export default function ProviderDetailsModal({
     accessKeyId: string,
     secretAccessKey: string,
   ) {
-    return fetchWithAuth(Endpoints.ComputeProvider.AwsCredentials(providerIdToSave), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    return fetchWithAuth(
+      Endpoints.ComputeProvider.AwsCredentials(providerIdToSave),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          access_key_id: accessKeyId,
+          secret_access_key: secretAccessKey,
+        }),
       },
-      body: JSON.stringify({
-        access_key_id: accessKeyId,
-        secret_access_key: secretAccessKey,
-      }),
-    });
+    );
   }
 
   const saveProvider = async () => {
@@ -777,7 +780,7 @@ export default function ProviderDetailsModal({
       );
       const hasPartialAwsCreds = Boolean(
         (trimmedAwsAccessKeyId && !trimmedAwsSecretAccessKey) ||
-          (!trimmedAwsAccessKeyId && trimmedAwsSecretAccessKey),
+        (!trimmedAwsAccessKeyId && trimmedAwsSecretAccessKey),
       );
       if (type === 'aws' && hasPartialAwsCreds) {
         addNotification({
@@ -1418,7 +1421,9 @@ export default function ProviderDetailsModal({
                       <FormLabel>Access Key ID</FormLabel>
                       <Input
                         value={awsAccessKeyId}
-                        onChange={(e) => setAwsAccessKeyId(e.currentTarget.value)}
+                        onChange={(e) =>
+                          setAwsAccessKeyId(e.currentTarget.value)
+                        }
                         placeholder="AKIA..."
                         fullWidth
                       />
@@ -1439,8 +1444,8 @@ export default function ProviderDetailsModal({
                       level="body-sm"
                       sx={{ mt: 0.5, color: 'text.tertiary' }}
                     >
-                      Optional. If provided, credentials are saved along with the
-                      provider when you click Save.
+                      Optional. If provided, credentials are saved along with
+                      the provider when you click Save.
                     </Typography>
                   </Box>
                 </>

@@ -245,18 +245,28 @@ class AWSProvider(ComputeProvider):
         return key_name
 
     def _get_latest_dl_ami(self, ec2) -> str:
-        response = ec2.describe_images(
-            Owners=["amazon"],
-            Filters=[
-                {"Name": "name", "Values": ["Deep Learning AMI GPU PyTorch*Ubuntu*"]},
-                {"Name": "state", "Values": ["available"]},
-                {"Name": "architecture", "Values": ["x86_64"]},
-            ],
-        )
-        images = sorted(response["Images"], key=lambda x: x["CreationDate"], reverse=True)
-        if not images:
-            raise RuntimeError(f"No Deep Learning AMI found in region {self.region}")
-        return images[0]["ImageId"]
+        # AWS occasionally changes DLAMI naming. Try multiple known patterns.
+        name_patterns = [
+            "Deep Learning AMI GPU PyTorch*Ubuntu*",
+            "Deep Learning Base OSS Nvidia Driver GPU AMI*Ubuntu*",
+            "Deep Learning OSS Nvidia Driver AMI GPU*Ubuntu*",
+        ]
+        owners = ["amazon", "898082745236"]
+
+        for name_pattern in name_patterns:
+            response = ec2.describe_images(
+                Owners=owners,
+                Filters=[
+                    {"Name": "name", "Values": [name_pattern]},
+                    {"Name": "state", "Values": ["available"]},
+                    {"Name": "architecture", "Values": ["x86_64"]},
+                ],
+            )
+            images = sorted(response.get("Images", []), key=lambda x: x.get("CreationDate", ""), reverse=True)
+            if images:
+                return images[0]["ImageId"]
+
+        raise RuntimeError(f"No Deep Learning AMI found in region {self.region}")
 
     def _resolve_instance_type(self, config: ClusterConfig) -> str:
         if config.accelerators:
