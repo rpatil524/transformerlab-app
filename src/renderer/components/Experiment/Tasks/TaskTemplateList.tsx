@@ -10,8 +10,16 @@ import {
   Menu,
   MenuItem,
   Skeleton,
+  Chip,
+  Box,
 } from '@mui/joy';
-import { PlayIcon, Trash2Icon, MoreVerticalIcon } from 'lucide-react';
+import {
+  PlayIcon,
+  Trash2Icon,
+  MoreVerticalIcon,
+  ChevronRightIcon,
+  ChevronDownIcon,
+} from 'lucide-react';
 import SafeJSONParse from 'renderer/components/Shared/SafeJSONParse';
 
 type TaskRow = {
@@ -27,6 +35,15 @@ type TaskRow = {
   remote_task?: boolean;
 };
 
+function jobBelongsToTask(job: any, task: TaskRow): boolean {
+  const jd = job?.job_data ?? {};
+  if (jd.task_id && String(jd.task_id) === String(task.id)) return true;
+  const taskName = (task.title?.trim() || task.name?.trim()) ?? '';
+  if (taskName && jd.template_name && jd.template_name === taskName)
+    return true;
+  return false;
+}
+
 type TaskTemplateListProps = {
   tasksList: TaskRow[];
   onDeleteTask?: (taskId: string, taskName?: string) => void;
@@ -36,6 +53,10 @@ type TaskTemplateListProps = {
   onViewFilesTask?: (task: TaskRow) => void;
   loading: boolean;
   interactTasks?: boolean;
+  allJobs?: any[];
+  expandedTaskIds?: Set<string>;
+  onToggleTaskExpanded?: (taskId: string) => void;
+  renderJobsForTask?: (taskId: string, jobs: any[]) => React.ReactNode;
 };
 
 function getTitle(task: TaskRow) {
@@ -54,6 +75,10 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
   onViewFilesTask,
   loading,
   interactTasks = false,
+  allJobs = [],
+  expandedTaskIds = new Set(),
+  onToggleTaskExpanded,
+  renderJobsForTask,
 }) => {
   const getResourcesInfo = (task: TaskRow) => {
     if (task.type !== 'REMOTE') {
@@ -203,78 +228,143 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
         </tr>
       </thead>
       <tbody>
-        {tasksList.map((row) => (
-          <tr key={row.id}>
-            <td>
-              <Typography level="title-sm" sx={{ overflow: 'clip' }}>
-                {getTitle(row)}
-              </Typography>
-            </td>
-            {interactTasks && (
-              <td style={{ overflow: 'clip' }}>
-                <Typography level="body-sm">{row.provider_name}</Typography>
-              </td>
-            )}
-            <td style={{ overflow: 'clip' }}>
-              <Typography level="body-sm">{getCommandInfo(row)}</Typography>
-            </td>
-            <td style={{ overflow: 'hidden' }}>
-              <Typography level="body-sm">{getResourcesInfo(row)}</Typography>
-            </td>
-            <td
-              style={{
-                overflow: 'visible',
-              }}
-            >
-              <ButtonGroup sx={{ justifyContent: 'flex-end' }}>
-                <Button
-                  startDecorator={<PlayIcon />}
-                  variant="soft"
-                  color="success"
-                  onClick={() => onQueueTask?.(row)}
-                >
-                  Queue
-                </Button>
-                <Button variant="outlined" onClick={() => onEditTask?.(row)}>
-                  Edit
-                </Button>
-                <IconButton
-                  variant="plain"
-                  color="danger"
-                  onClick={() => onDeleteTask?.(row.id, getTitle(row))}
-                  title="Delete task"
-                >
-                  <Trash2Icon style={{ cursor: 'pointer' }} />
-                </IconButton>
-                {(onExportTask || onViewFilesTask) && (
-                  <Dropdown>
-                    <MenuButton
-                      slots={{ root: IconButton }}
-                      slotProps={{
-                        root: { variant: 'plain', color: 'neutral' },
-                      }}
-                      sx={{ minWidth: 0 }}
-                    >
-                      <MoreVerticalIcon size={16} />
-                    </MenuButton>
-                    <Menu>
-                      {onViewFilesTask && (
-                        <MenuItem onClick={() => onViewFilesTask?.(row)}>
-                          View Files
-                        </MenuItem>
-                      )}
-                      {onExportTask && (
-                        <MenuItem onClick={() => onExportTask?.(row.id)}>
-                          Export to Team Gallery
-                        </MenuItem>
-                      )}
-                    </Menu>
-                  </Dropdown>
+        {tasksList.map((row) => {
+          const isExpanded = expandedTaskIds.has(row.id);
+          const taskJobs = allJobs.filter((job) => jobBelongsToTask(job, row));
+          return (
+            <React.Fragment key={row.id}>
+              <tr>
+                <td>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    {onToggleTaskExpanded && (
+                      <IconButton
+                        size="sm"
+                        variant="plain"
+                        color="neutral"
+                        onClick={() => onToggleTaskExpanded(row.id)}
+                        sx={{ minWidth: 0, p: 0.25 }}
+                      >
+                        {isExpanded ? (
+                          <ChevronDownIcon size={14} />
+                        ) : (
+                          <ChevronRightIcon size={14} />
+                        )}
+                      </IconButton>
+                    )}
+                    <Typography level="title-sm" sx={{ overflow: 'clip' }}>
+                      {getTitle(row)}
+                    </Typography>
+                    {onToggleTaskExpanded && taskJobs.length > 0 && (
+                      <Chip
+                        size="sm"
+                        variant="soft"
+                        color="neutral"
+                        sx={{ ml: 0.5 }}
+                      >
+                        {taskJobs.length}
+                      </Chip>
+                    )}
+                  </Box>
+                </td>
+                {interactTasks && (
+                  <td style={{ overflow: 'clip' }}>
+                    <Typography level="body-sm">{row.provider_name}</Typography>
+                  </td>
                 )}
-              </ButtonGroup>
-            </td>
-          </tr>
-        ))}
+                <td style={{ overflow: 'clip' }}>
+                  <Typography level="body-sm">{getCommandInfo(row)}</Typography>
+                </td>
+                <td style={{ overflow: 'hidden' }}>
+                  <Typography level="body-sm">
+                    {getResourcesInfo(row)}
+                  </Typography>
+                </td>
+                <td
+                  style={{
+                    overflow: 'visible',
+                  }}
+                >
+                  <ButtonGroup sx={{ justifyContent: 'flex-end' }}>
+                    <Button
+                      startDecorator={<PlayIcon />}
+                      variant="soft"
+                      color="success"
+                      onClick={() => onQueueTask?.(row)}
+                    >
+                      Queue
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      onClick={() => onEditTask?.(row)}
+                    >
+                      Edit
+                    </Button>
+                    <IconButton
+                      variant="plain"
+                      color="danger"
+                      onClick={() => onDeleteTask?.(row.id, getTitle(row))}
+                      title="Delete task"
+                    >
+                      <Trash2Icon style={{ cursor: 'pointer' }} />
+                    </IconButton>
+                    {(onExportTask || onViewFilesTask) && (
+                      <Dropdown>
+                        <MenuButton
+                          slots={{ root: IconButton }}
+                          slotProps={{
+                            root: { variant: 'plain', color: 'neutral' },
+                          }}
+                          sx={{ minWidth: 0 }}
+                        >
+                          <MoreVerticalIcon size={16} />
+                        </MenuButton>
+                        <Menu>
+                          {onViewFilesTask && (
+                            <MenuItem onClick={() => onViewFilesTask?.(row)}>
+                              View Files
+                            </MenuItem>
+                          )}
+                          {onExportTask && (
+                            <MenuItem onClick={() => onExportTask?.(row.id)}>
+                              Export to Team Gallery
+                            </MenuItem>
+                          )}
+                        </Menu>
+                      </Dropdown>
+                    )}
+                  </ButtonGroup>
+                </td>
+              </tr>
+              {isExpanded && renderJobsForTask && (
+                <tr>
+                  <td colSpan={99} style={{ padding: 0, border: 'none' }}>
+                    <Box
+                      sx={{
+                        pl: 4,
+                        pr: 1,
+                        py: 1,
+                        bgcolor: 'background.level1',
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      {taskJobs.length === 0 ? (
+                        <Typography
+                          level="body-sm"
+                          sx={{ color: 'text.tertiary', py: 1 }}
+                        >
+                          No runs yet
+                        </Typography>
+                      ) : (
+                        renderJobsForTask(row.id, taskJobs)
+                      )}
+                    </Box>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          );
+        })}
       </tbody>
     </Table>
   );
