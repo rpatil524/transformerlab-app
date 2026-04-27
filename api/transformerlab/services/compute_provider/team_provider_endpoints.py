@@ -82,6 +82,7 @@ async def create_provider_for_team(
         ProviderType.RUNPOD,
         ProviderType.LOCAL,
         ProviderType.DSTACK,
+        ProviderType.AWS,
     ]
     if provider_data.type not in allowed_provider_types:
         allowed_values = ", ".join(provider_type.value for provider_type in allowed_provider_types)
@@ -101,6 +102,11 @@ async def create_provider_for_team(
             )
 
     config_dict = provider_data.config.model_dump(exclude_none=True)
+
+    # Auto-inject aws_profile and team_id for AWS providers
+    if provider_data.type == ProviderType.AWS:
+        config_dict.setdefault("aws_profile", f"transformerlab-compute-{team_id}")
+        config_dict["team_id"] = team_id
 
     provider = await create_team_provider(
         session=session,

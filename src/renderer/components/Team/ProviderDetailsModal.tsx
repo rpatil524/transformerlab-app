@@ -64,6 +64,9 @@ const DEFAULT_CONFIGS = {
   "dstack_project": "<Your dstack project name e.g. main>"
 }`,
   local: `{}`,
+  aws: `{
+  "region": "us-east-1"
+}`,
 } as const;
 
 const DEFAULT_SUPPORTED_ACCELERATORS: Record<string, string[]> = {
@@ -72,6 +75,7 @@ const DEFAULT_SUPPORTED_ACCELERATORS: Record<string, string[]> = {
   runpod: ['NVIDIA'],
   dstack: ['NVIDIA'],
   local: ['AppleSilicon', 'cpu'],
+  aws: ['NVIDIA'],
 };
 
 export default function ProviderDetailsModal({
@@ -127,6 +131,14 @@ export default function ProviderDetailsModal({
   const [runpodApiKey, setRunpodApiKey] = useState('');
   const [runpodApiKeyChanged, setRunpodApiKeyChanged] = useState(false);
   const [runpodApiBaseUrl, setRunpodApiBaseUrl] = useState('');
+
+  // AWS-specific form fields
+  const [awsRegion, setAwsRegion] = useState('us-east-1');
+  const [awsAccessKeyId, setAwsAccessKeyId] = useState('');
+  const [awsSecretAccessKey, setAwsSecretAccessKey] = useState('');
+  const [awsCredsSaved, setAwsCredsSaved] = useState(false);
+  const [awsCredsSaving, setAwsCredsSaving] = useState(false);
+  const [awsCredsExpanded, setAwsCredsExpanded] = useState(false);
 
   const { fetchWithAuth } = useAuth();
   const { data: providerData, isLoading: providerDataLoading } = useAPI(
@@ -324,6 +336,23 @@ export default function ProviderDetailsModal({
     providerId,
   ]);
 
+  const parseAwsConfig = (configObj: any) => {
+    if (configObj && typeof configObj === 'object') {
+      setAwsRegion(configObj.region || 'us-east-1');
+      if (configObj.supported_accelerators) {
+        setSupportedAccelerators(configObj.supported_accelerators);
+      }
+    }
+  };
+
+  const buildAwsConfig = useCallback(() => {
+    const configObj: any = { region: awsRegion };
+    if (supportedAccelerators.length > 0) {
+      configObj.supported_accelerators = supportedAccelerators;
+    }
+    return configObj;
+  }, [awsRegion, supportedAccelerators]);
+
   // if a providerId is passed then we are editing an existing provider
   // Otherwise we are creating a new provider
   useEffect(() => {
@@ -373,6 +402,9 @@ export default function ProviderDetailsModal({
       if (providerData.type === 'runpod') {
         parseRunpodConfig(rawConfigObj);
       }
+      if (providerData.type === 'aws') {
+        parseAwsConfig(rawConfigObj);
+      }
       setConfig(JSON.stringify(rawConfigObj, null, 2));
     } else if (!providerId) {
       // Reset form when in "add" mode (no providerId)
@@ -407,6 +439,11 @@ export default function ProviderDetailsModal({
       setRunpodApiKey('');
       setRunpodApiKeyChanged(false);
       setRunpodApiBaseUrl('');
+      setAwsRegion('us-east-1');
+      setAwsAccessKeyId('');
+      setAwsSecretAccessKey('');
+      setAwsCredsSaved(false);
+      setAwsCredsExpanded(false);
     }
   }, [providerId, providerData]);
 
@@ -447,6 +484,11 @@ export default function ProviderDetailsModal({
       setRunpodApiKey('');
       setRunpodApiKeyChanged(false);
       setRunpodApiBaseUrl('');
+      setAwsRegion('us-east-1');
+      setAwsAccessKeyId('');
+      setAwsSecretAccessKey('');
+      setAwsCredsSaved(false);
+      setAwsCredsExpanded(false);
     }
   }, [open]);
 
@@ -530,6 +572,14 @@ export default function ProviderDetailsModal({
           // Ignore parse errors
         }
       }
+      if (type === 'aws') {
+        try {
+          const configObj = JSON.parse(DEFAULT_CONFIGS['aws']);
+          parseAwsConfig(configObj);
+        } catch (e) {
+          // Ignore parse errors
+        }
+      }
     }
   }, [type, providerId]);
 
@@ -553,12 +603,17 @@ export default function ProviderDetailsModal({
         const configObj = buildRunpodConfig();
         setConfig(JSON.stringify(configObj, null, 2));
       }
+      if (type === 'aws') {
+        const configObj = buildAwsConfig();
+        setConfig(JSON.stringify(configObj, null, 2));
+      }
     }
   }, [
     buildSlurmConfig,
     buildSkypilotConfig,
     buildDstackConfig,
     buildRunpodConfig,
+    buildAwsConfig,
     type,
     providerId,
   ]);
@@ -690,6 +745,8 @@ export default function ProviderDetailsModal({
         parsedConfig = buildDstackConfig();
       } else if (type === 'runpod') {
         parsedConfig = buildRunpodConfig();
+      } else if (type === 'aws') {
+        parsedConfig = buildAwsConfig();
       } else if (type === 'local') {
         // Local providers are configured via supported accelerators only
         parsedConfig = {};
@@ -847,6 +904,7 @@ export default function ProviderDetailsModal({
                   <Option value="slurm">SLURM</Option>
                   <Option value="runpod">Runpod</Option>
                   <Option value="dstack">dstack</Option>
+                  <Option value="aws">AWS (beta)</Option>
                   {!hasLocalProvider && !providerId && (
                     <Option value="local">Local</Option>
                   )}
@@ -1241,12 +1299,169 @@ export default function ProviderDetailsModal({
                 </>
               )}
 
+              {type === 'aws' && (
+                <>
+                  <FormControl sx={{ mt: 2 }}>
+                    <FormLabel>Region *</FormLabel>
+                    <Input
+                      value={awsRegion}
+                      onChange={(event) =>
+                        setAwsRegion(event.currentTarget.value)
+                      }
+                      placeholder="us-east-1"
+                      fullWidth
+                    />
+                    <Typography
+                      level="body-sm"
+                      sx={{ mt: 0.5, color: 'text.tertiary' }}
+                    >
+                      AWS region where instances will be launched.
+                    </Typography>
+                  </FormControl>
+
+                  {providerId &&
+                    (() => {
+                      const cfg =
+                        typeof providerData?.config === 'string'
+                          ? (() => {
+                              try {
+                                return JSON.parse(providerData.config);
+                              } catch {
+                                return {};
+                              }
+                            })()
+                          : providerData?.config || {};
+                      return cfg?.aws_profile ? (
+                        <FormControl sx={{ mt: 1 }}>
+                          <FormLabel>AWS Profile</FormLabel>
+                          <Typography
+                            level="body-sm"
+                            sx={{
+                              color: 'text.secondary',
+                              fontFamily: 'monospace',
+                            }}
+                          >
+                            {cfg.aws_profile}
+                          </Typography>
+                          <Typography
+                            level="body-sm"
+                            sx={{ mt: 0.5, color: 'text.tertiary' }}
+                          >
+                            Configure this profile in your AWS CLI or use the
+                            section below.
+                          </Typography>
+                        </FormControl>
+                      ) : null;
+                    })()}
+
+                  {providerId && (
+                    <Box sx={{ mt: 1 }}>
+                      <Button
+                        variant="plain"
+                        size="sm"
+                        onClick={() => setAwsCredsExpanded((v) => !v)}
+                        endDecorator={
+                          awsCredsExpanded ? (
+                            <ChevronDownIcon size={14} />
+                          ) : (
+                            <ChevronRightIcon size={14} />
+                          )
+                        }
+                        sx={{ pl: 0 }}
+                      >
+                        Configure AWS Credentials
+                      </Button>
+                      {awsCredsExpanded && (
+                        <Box
+                          sx={{
+                            mt: 1,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 1,
+                          }}
+                        >
+                          <FormControl>
+                            <FormLabel>Access Key ID</FormLabel>
+                            <Input
+                              value={awsAccessKeyId}
+                              onChange={(e) =>
+                                setAwsAccessKeyId(e.currentTarget.value)
+                              }
+                              placeholder="AKIA..."
+                              fullWidth
+                            />
+                          </FormControl>
+                          <FormControl>
+                            <FormLabel>Secret Access Key</FormLabel>
+                            <Input
+                              value={awsSecretAccessKey}
+                              onChange={(e) =>
+                                setAwsSecretAccessKey(e.currentTarget.value)
+                              }
+                              type="password"
+                              placeholder="Your AWS secret access key"
+                              fullWidth
+                            />
+                          </FormControl>
+                          <Button
+                            size="sm"
+                            variant="outlined"
+                            loading={awsCredsSaving}
+                            color={awsCredsSaved ? 'success' : 'primary'}
+                            onClick={async () => {
+                              setAwsCredsSaving(true);
+                              try {
+                                const resp = await fetchWithAuth(
+                                  Endpoints.ComputeProvider.AwsCredentials(
+                                    providerId,
+                                  ),
+                                  {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                    },
+                                    body: JSON.stringify({
+                                      access_key_id: awsAccessKeyId,
+                                      secret_access_key: awsSecretAccessKey,
+                                    }),
+                                  },
+                                );
+                                if (resp.ok) {
+                                  setAwsCredsSaved(true);
+                                  addNotification({
+                                    type: 'success',
+                                    message: 'AWS credentials saved.',
+                                  });
+                                } else {
+                                  addNotification({
+                                    type: 'danger',
+                                    message: 'Failed to save AWS credentials.',
+                                  });
+                                }
+                              } finally {
+                                setAwsCredsSaving(false);
+                              }
+                            }}
+                            sx={{ alignSelf: 'flex-start' }}
+                          >
+                            {awsCredsSaved
+                              ? 'Credentials Saved'
+                              : 'Save Credentials'}
+                          </Button>
+                        </Box>
+                      )}
+                    </Box>
+                  )}
+                </>
+              )}
+
               {/* Generic JSON config for non-structured providers or advanced editing */}
               {type !== 'slurm' &&
                 type !== 'skypilot' &&
                 type !== 'dstack' &&
                 type !== 'runpod' &&
-                type !== 'local' && (
+                type !== 'local' &&
+                type !== 'aws' && (
                   <FormControl sx={{ mt: 1 }}>
                     <FormLabel>Configuration</FormLabel>
                     <Textarea
