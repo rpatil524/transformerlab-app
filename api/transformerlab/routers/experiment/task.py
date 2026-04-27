@@ -34,7 +34,6 @@ from transformerlab.shared.github_utils import (
 )
 from transformerlab.routers.auth import get_user_and_team
 from transformerlab.shared.models.user_model import get_async_session
-from lab.task_template import TaskTemplate
 from transformerlab.schemas.task import (
     ExportTaskToTeamGalleryRequest,
     ImportTaskFromGalleryRequest,
@@ -125,7 +124,7 @@ async def task_get_all(experimentId: str):
     tags=["tasks:{experimentId}"],
 )
 async def task_get_by_id(experimentId: str, task_id: str):
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if task is None:
         return {"message": "NOT FOUND"}
     return task
@@ -161,7 +160,7 @@ async def task_get_by_type_in_experiment(experimentId: str, type: str):
     response_model=TaskFilesResponse,
     summary="List files associated with a task template (GitHub + local mounts)",
 )
-async def task_list_files(task_id: str) -> TaskFilesResponse:
+async def task_list_files(experimentId: str, task_id: str) -> TaskFilesResponse:
     """
     Return a lightweight list of files associated with a task template.
 
@@ -171,7 +170,7 @@ async def task_list_files(task_id: str) -> TaskFilesResponse:
       readily available.
     - If file_mounts is set, it will be returned as-is as a list of local paths.
     """
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -215,7 +214,7 @@ async def task_list_files(task_id: str) -> TaskFilesResponse:
     # Always list files from the canonical per-task directory.
     # This directory contains at minimum task.yaml and may include uploaded files.
     try:
-        task_dir = await task_service.get_task_dir(task_id)
+        task_dir = await task_service.get_task_dir(task_id, experiment_id=experimentId)
         if await storage.exists(task_dir):
             entries = await storage.ls(task_dir)
             # Build a set of basenames already in local_files for dedup.
@@ -245,20 +244,15 @@ async def task_list_files(task_id: str) -> TaskFilesResponse:
     "/{task_id}/file/{file_path:path}",
     summary="Serve a file from a task's local workspace directory for preview",
 )
-async def task_get_file(task_id: str, file_path: str):
+async def task_get_file(experimentId: str, task_id: str, file_path: str):
     """
     Serve a file from the per-task workspace directory (used for upload-from-directory tasks).
 
     This mirrors the behavior of the jobs get_job_file endpoint but is scoped to
-    workspace/task/{task_id}. It is primarily intended for lightweight previews in
-    the UI and supports both text and binary content.
+    the task's experiment-scoped directory. It is primarily intended for lightweight
+    previews in the UI and supports both text and binary content.
     """
-    workspace_dir = await get_workspace_dir()
-    if not workspace_dir:
-        raise HTTPException(status_code=500, detail="Workspace directory is not configured")
-
-    # Files for upload-from-directory tasks are materialized under workspace/task/{task_id}
-    task_dir = storage.join(workspace_dir, "task", str(task_id))
+    task_dir = await task_service.get_task_dir(task_id, experiment_id=experimentId)
     safe_rel = posixpath.normpath(file_path).lstrip("/")
     if safe_rel.startswith("..") or "/.." in safe_rel:
         raise HTTPException(status_code=400, detail="Invalid file path")
@@ -361,15 +355,11 @@ async def task_update_file(experimentId: str, task_id: str, file_path: str, requ
     .py, .md, .yaml/.yml, .json, .txt). Request bodies are decoded as UTF-8 and
     written in text mode. Binary uploads should use the file-upload endpoint.
     """
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    workspace_dir = await get_workspace_dir()
-    if not workspace_dir:
-        raise HTTPException(status_code=500, detail="Workspace directory is not configured")
-
-    task_dir = storage.join(workspace_dir, "task", str(task_id))
+    task_dir = await task_service.get_task_dir(task_id, experiment_id=experimentId)
     safe_rel = posixpath.normpath(file_path).lstrip("/")
     if safe_rel.startswith("..") or "/.." in safe_rel:
         raise HTTPException(status_code=400, detail="Invalid file path")
@@ -386,7 +376,7 @@ async def task_update_file(experimentId: str, task_id: str, file_path: str, requ
         await f.write(body)
 
     if not task.get("file_mounts"):
-        await task_service.update_task(task_id, {"file_mounts": True})
+        await task_service.update_task(task_id, {"file_mounts": True}, experiment_id=experimentId)
 
     await cache.invalidate(f"tasks:{experimentId}")
     return {"message": "OK"}
@@ -397,15 +387,11 @@ async def task_update_file(experimentId: str, task_id: str, file_path: str, requ
     summary="Delete a file from a task's local workspace directory",
 )
 async def task_delete_file(experimentId: str, task_id: str, file_path: str):
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    workspace_dir = await get_workspace_dir()
-    if not workspace_dir:
-        raise HTTPException(status_code=500, detail="Workspace directory is not configured")
-
-    task_dir = storage.join(workspace_dir, "task", str(task_id))
+    task_dir = await task_service.get_task_dir(task_id, experiment_id=experimentId)
     safe_rel = posixpath.normpath(file_path).lstrip("/")
     if safe_rel.startswith("..") or "/.." in safe_rel:
         raise HTTPException(status_code=400, detail="Invalid file path")
@@ -432,15 +418,11 @@ async def task_upload_file(
     files: list[UploadFile] = File(default=[]),
     upload_id: Optional[str] = None,
 ):
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    workspace_dir = await get_workspace_dir()
-    if not workspace_dir:
-        raise HTTPException(status_code=500, detail="Workspace directory is not configured")
-
-    task_dir = storage.join(workspace_dir, "task", str(task_id))
+    task_dir = await task_service.get_task_dir(task_id, experiment_id=experimentId)
     await storage.makedirs(task_dir, exist_ok=True)
 
     saved_files: list[str] = []
@@ -480,7 +462,7 @@ async def task_upload_file(
         raise HTTPException(status_code=400, detail="No valid files uploaded")
 
     if not task.get("file_mounts"):
-        await task_service.update_task(task_id, {"file_mounts": True})
+        await task_service.update_task(task_id, {"file_mounts": True}, experiment_id=experimentId)
 
     await cache.invalidate(f"tasks:{experimentId}")
     return {"status": "success", "files": saved_files}
@@ -490,14 +472,14 @@ async def task_upload_file(
     "/{task_id}/github_file/{file_path:path}",
     summary="Serve a file from the task's associated GitHub repository for preview",
 )
-async def task_get_github_file(task_id: str, file_path: str):
+async def task_get_github_file(experimentId: str, task_id: str, file_path: str):
     """
     Serve a file from the GitHub repository configured on the task (github_repo_url).
 
     This endpoint uses the same GitHub PAT resolution logic as other GitHub helpers
     and is intended for lightweight previews in the UI.
     """
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -613,7 +595,7 @@ async def update_task(experimentId: str, task_id: str, new_task: dict = Body()):
     if "name" in new_task:
         new_task["name"] = secure_filename(new_task["name"])
 
-    success = await task_service.update_task(task_id, new_task)
+    success = await task_service.update_task(task_id, new_task, experiment_id=experimentId)
     if success:
         # Best-effort invalidation: task detail + this experiment's task lists.
         await cache.invalidate(f"tasks:{experimentId}")
@@ -624,7 +606,7 @@ async def update_task(experimentId: str, task_id: str, new_task: dict = Body()):
 
 @router.get("/{task_id}/delete", summary="Deletes a task")
 async def delete_task(experimentId: str, task_id: str):
-    success = await task_service.delete_task(task_id)
+    success = await task_service.delete_task(task_id, experiment_id=experimentId)
     if success:
         # Best-effort invalidation: task detail + this experiment's task lists.
         await cache.invalidate(f"tasks:{experimentId}")
@@ -702,15 +684,15 @@ async def _resolve_provider(
                     matched_provider = provider
                     break
 
-        # Use matched provider if found, otherwise use first available as fallback
+        # Use matched provider if found, otherwise prefer the team's default
+        # provider (is_default=True), falling back to the first available.
         if matched_provider:
             task_data["provider_id"] = str(matched_provider.id)
             task_data["provider_name"] = matched_provider.name
         else:
-            # No provider specified or no match found, use first available
-            first_provider = providers[0]
-            task_data["provider_id"] = str(first_provider.id)
-            task_data["provider_name"] = first_provider.name
+            chosen_provider = next((p for p in providers if getattr(p, "is_default", False)), providers[0])
+            task_data["provider_id"] = str(chosen_provider.id)
+            task_data["provider_name"] = chosen_provider.name
     except Exception:
         # If provider resolution fails, continue without it
         # The task can still be created, provider selection can happen later
@@ -948,23 +930,23 @@ async def create_task(
 
 @router.get("/{task_id}/yaml", summary="Get task.yaml from the task directory")
 async def get_task_yaml(experimentId: str, task_id: str):
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    content = await task_service.read_task_yaml(task_id)
+    content = await task_service.read_task_yaml(task_id, experiment_id=experimentId)
     return PlainTextResponse(content, media_type="text/plain")
 
 
 @router.put("/{task_id}/yaml", summary="Save task.yaml and sync index.json")
 async def update_task_yaml(experimentId: str, task_id: str, request: Request):
     body = (await request.body()).decode("utf-8")
-    task = await task_service.task_get_by_id(task_id)
+    task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    await task_service.write_task_yaml(task_id, body)
+    await task_service.write_task_yaml(task_id, body, experiment_id=experimentId)
     task_data = _parse_yaml_to_task_data(body)
     task_data.pop("id", None)
-    success = await task_service.update_task_from_yaml(task_id, task_data)
+    success = await task_service.update_task_from_yaml(task_id, task_data, experiment_id=experimentId)
     if not success:
         raise HTTPException(status_code=404, detail="Task not found")
     await cache.invalidate(f"tasks:{experimentId}")
@@ -1151,25 +1133,21 @@ async def import_task_from_gallery(
         # Invalidate cached task lists for this experiment (best-effort).
         await cache.invalidate(f"tasks:{experimentId}")
 
-        # Store task.yaml in the task directory for GitHub-sourced interactive tasks
+        # Store task.yaml in the task directory for GitHub-sourced interactive tasks.
+        # Use task_service.write_task_yaml so the file lands in the experiment-scoped
+        # path that task_list_files reads from (workspace/experiments/{exp_id}/tasks/{id}).
         if github_repo_url and source_yaml_data:
-            task_template = TaskTemplate(secure_filename(str(task_id)))
-            task_dir_path = await task_template.get_dir()
-            await storage.makedirs(task_dir_path, exist_ok=True)
-            yaml_path = storage.join(task_dir_path, "task.yaml")
-            async with await storage.open(yaml_path, "w", encoding="utf-8") as f:
-                await f.write(task_yaml_content)
+            await task_service.write_task_yaml(task_id, task_yaml_content, experiment_id=experimentId)
 
         # Copy local_task_dir files into the task directory (inside a subdirectory
         # matching the source directory name, mirroring what github_repo_dir does
         # at clone time) and mark file_mounts so the runner copies them at launch.
         if local_task_dir and os.path.isdir(local_task_dir):
-            task_template = TaskTemplate(secure_filename(str(task_id)))
-            task_dir_path = await task_template.get_dir()
+            task_dir_path = await task_service.get_task_dir(task_id, experiment_id=experimentId)
             await storage.makedirs(task_dir_path, exist_ok=True)
             dest_subdir = storage.join(task_dir_path, os.path.basename(local_task_dir.rstrip("/")))
             await storage.copy_dir(local_task_dir, dest_subdir)
-            await task_service.update_task(task_id, {"file_mounts": True})
+            await task_service.update_task(task_id, {"file_mounts": True}, experiment_id=experimentId)
 
         return {"status": "success", "message": f"Interactive task '{task_name}' imported successfully", "id": task_id}
 
@@ -1267,13 +1245,8 @@ async def import_task_from_gallery(
     # Create the task with all fields stored directly (flat structure)
     task_id = await task_service.add_task(task_data)
 
-    # Store task.yaml in task directory
-    task = TaskTemplate(secure_filename(str(task_id)))
-    task_dir = await task.get_dir()
-    await storage.makedirs(task_dir, exist_ok=True)
-    yaml_path = storage.join(task_dir, "task.yaml")
-    async with await storage.open(yaml_path, "w", encoding="utf-8") as f:
-        await f.write(task_yaml_content)
+    # Store task.yaml in the experiment-scoped task directory
+    await task_service.write_task_yaml(task_id, task_yaml_content, experiment_id=experimentId)
 
     # Invalidate cached task lists for this experiment (best-effort).
     await cache.invalidate(f"tasks:{experimentId}")
@@ -1550,11 +1523,10 @@ async def import_task_from_team_gallery(
 
         # Create task + copy full directory into the task workspace dir
         task_id = await task_service.add_task(task_data)
-        task = TaskTemplate(secure_filename(str(task_id)))
-        task_dir = await task.get_dir()
+        task_dir = await task_service.get_task_dir(task_id, experiment_id=experimentId)
         await storage.makedirs(task_dir, exist_ok=True)
 
-        # Copy the entire directory contents (task.yaml + attachments) into workspace/task/{task_id}
+        # Copy the entire directory contents (task.yaml + attachments) into the experiment-scoped task dir
         try:
             await storage.copy_dir(str(local_task_dir), task_dir)
         except Exception as e:
@@ -1581,7 +1553,7 @@ async def import_task_from_team_gallery(
                     await f.write(json.dumps(data, indent=2))
             else:
                 # No index.json in the copied directory; write at least minimal metadata.
-                await task_service.update_task(task_id, {"id": task_id})
+                await task_service.update_task(task_id, {"id": task_id}, experiment_id=experimentId)
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to overwrite id in index.json for imported team task: {e}"
@@ -1630,10 +1602,7 @@ async def import_task_from_team_gallery(
             _clear_interactive_launch_provider(task_data)
         task_id = await task_service.add_task(task_data)
 
-        # Write a task.yaml into the task directory so the editor works
-        task = TaskTemplate(secure_filename(str(task_id)))
-        task_dir = await task.get_dir()
-        await storage.makedirs(task_dir, exist_ok=True)
+        # Write a task.yaml into the experiment-scoped task directory so the editor works
         yaml_obj = {
             "name": task_data["name"],
             "setup": task_data.get("setup"),
@@ -1651,9 +1620,9 @@ async def import_task_from_team_gallery(
         # Remove empty values so YAML stays tidy
         yaml_obj["resources"] = {k: v for k, v in (yaml_obj.get("resources") or {}).items() if v is not None}
         yaml_obj = {k: v for k, v in yaml_obj.items() if v not in (None, {}, [])}
-        yaml_path = storage.join(task_dir, "task.yaml")
-        async with await storage.open(yaml_path, "w", encoding="utf-8") as f:
-            await f.write(yaml.safe_dump(yaml_obj, sort_keys=False))
+        await task_service.write_task_yaml(
+            task_id, yaml.safe_dump(yaml_obj, sort_keys=False), experiment_id=experimentId
+        )
 
         await cache.invalidate(f"tasks:{experimentId}")
         return {
@@ -1730,13 +1699,8 @@ async def import_task_from_team_gallery(
     # Create the task with all fields stored directly (flat structure)
     task_id = await task_service.add_task(task_data)
 
-    # Store task.yaml in task directory
-    task = TaskTemplate(secure_filename(str(task_id)))
-    task_dir = await task.get_dir()
-    await storage.makedirs(task_dir, exist_ok=True)
-    yaml_path = storage.join(task_dir, "task.yaml")
-    async with await storage.open(yaml_path, "w", encoding="utf-8") as f:
-        await f.write(task_yaml_content)
+    # Store task.yaml in the experiment-scoped task directory
+    await task_service.write_task_yaml(task_id, task_yaml_content, experiment_id=experimentId)
 
     # Invalidate cached task lists for this experiment (best-effort).
     await cache.invalidate(f"tasks:{experimentId}")
@@ -1750,6 +1714,7 @@ async def import_task_from_team_gallery(
 
 @router.post("/gallery/team/export", summary="Export an existing task to the team gallery")
 async def export_task_to_team_gallery(
+    experimentId: str,
     request: ExportTaskToTeamGalleryRequest,
     user_and_team=Depends(get_user_and_team),
 ):
@@ -1757,7 +1722,7 @@ async def export_task_to_team_gallery(
     Export a task into the team-specific gallery stored in workspace_dir.
     Tasks store all fields directly (not nested in config).
     """
-    task = await task_service.task_get_by_id(request.task_id)
+    task = await task_service.task_get_by_id(request.task_id, experiment_id=experimentId)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -1826,9 +1791,8 @@ async def export_task_to_team_gallery(
             short_id = secure_filename(str(request.task_id))[:12]
             dest_dir = storage.join(export_root, f"{safe_title}-{short_id}")
 
-            # Copy from the task's workspace dir (workspace/task/{task_id})
-            src_task = TaskTemplate(secure_filename(str(request.task_id)))
-            src_dir = await src_task.get_dir()
+            # Copy from the task's experiment-scoped workspace directory
+            src_dir = await task_service.get_task_dir(request.task_id, experiment_id=experimentId)
             if await storage.exists(src_dir):
                 # Ensure destination is clean
                 if await storage.exists(dest_dir):
@@ -1973,6 +1937,7 @@ async def add_task_to_team_gallery(
 
 @router.post("/gallery/team/delete", summary="Delete a task from the team gallery")
 async def delete_team_task_from_gallery(
+    experimentId: str,
     request: DeleteTeamTaskFromGalleryRequest,
     user_and_team=Depends(get_user_and_team),
 ):

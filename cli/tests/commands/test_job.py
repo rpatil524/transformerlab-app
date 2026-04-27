@@ -13,14 +13,26 @@ SAMPLE_JOBS = [
         "experiment_id": "exp1",
         "status": "RUNNING",
         "progress": 50,
-        "job_data": {"task_name": "train", "completion_status": "N/A"},
+        "job_data": {
+            "task_name": "train",
+            "completion_status": "N/A",
+            "description": "Bumped lr to 3e-5",
+            "start_time": "2026-04-24 10:00:00",
+        },
     },
     {
         "id": 2,
         "experiment_id": "exp1",
         "status": "COMPLETE",
         "progress": 100,
-        "job_data": {"task_name": "eval", "completion_status": "SUCCESS"},
+        "job_data": {
+            "task_name": "eval",
+            "completion_status": "SUCCESS",
+            "description": "Eval on test split",
+            "score": {"eval/loss": 2.1, "accuracy": 0.95},
+            "start_time": "2026-04-24 10:00:00",
+            "end_time": "2026-04-24 10:05:30",
+        },
     },
     {
         "id": 3,
@@ -34,7 +46,13 @@ SAMPLE_JOBS = [
         "experiment_id": "exp1",
         "status": "FAILED",
         "progress": 0,
-        "job_data": {"task_name": "export", "completion_status": "FAILED"},
+        "job_data": {
+            "task_name": "export",
+            "completion_status": "FAILED",
+            "score": {"eval/loss": 3.5},
+            "start_time": "2026-04-24 08:00:00",
+            "end_time": "2026-04-24 09:30:00",
+        },
     },
     {
         "id": 5,
@@ -72,9 +90,22 @@ def test_job_list_all(_mock_check, _mock_require, _mock_api):
     # All 5 jobs should appear
     assert "train" in result.output
     assert "eval" in result.output
-    assert "generate" in result.output
+    assert "gener" in result.output
     assert "export" in result.output
     assert "chat" in result.output
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.check_configs")
+def test_job_list_shows_description(_mock_check, _mock_require, _mock_api):
+    """Test that job list table includes the Description column with values."""
+    result = runner.invoke(app, ["job", "list"])
+    assert result.exit_code == 0
+    out = strip_ansi(result.output)
+    assert "Descr" in out
+    assert "Bumped" in out
+    assert "Eval" in out
 
 
 @patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
@@ -86,7 +117,7 @@ def test_job_list_running_only(_mock_check, _mock_require, _mock_api):
     assert result.exit_code == 0
     # Running jobs should appear
     assert "train" in result.output  # RUNNING
-    assert "generate" in result.output  # LAUNCHING
+    assert "gener" in result.output  # LAUNCHING
     assert "chat" in result.output  # INTERACTIVE
     # Completed/failed jobs should not appear
     assert "eval" not in result.output
@@ -135,6 +166,125 @@ def test_job_list_json_no_spinner_text(_mock_check, _mock_get_config, _mock_api)
     result = runner.invoke(app, ["--format", "json", "job", "list"])
     assert result.exit_code == 0
     json.loads(result.output.strip())
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.check_configs")
+def test_job_list_shows_duration(_mock_check, _mock_require, _mock_api):
+    """Test that job list table shows duration for jobs with start/end times."""
+    result = runner.invoke(app, ["job", "list"])
+    assert result.exit_code == 0
+    out = strip_ansi(result.output)
+    assert "Duration" in out
+    # Job 2: 5m 30s
+    assert "5m 30s" in out
+    # Job 4: 1h 30m
+    assert "1h 30m" in out
+
+
+def test_compute_duration_helper():
+    """Test the _compute_duration helper with various inputs."""
+    from transformerlab_cli.commands.job import _compute_duration
+
+    # Completed job
+    assert _compute_duration({"start_time": "2026-01-01 10:00:00", "end_time": "2026-01-01 10:00:45"}) == "45s"
+    assert _compute_duration({"start_time": "2026-01-01 10:00:00", "end_time": "2026-01-01 10:05:30"}) == "5m 30s"
+    assert _compute_duration({"start_time": "2026-01-01 10:00:00", "end_time": "2026-01-01 12:15:00"}) == "2h 15m"
+    # No start_time
+    assert _compute_duration({}) == ""
+    # Bad format
+    assert _compute_duration({"start_time": "invalid"}) == ""
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.check_configs")
+def test_job_list_shows_score(_mock_check, _mock_require, _mock_api):
+    """Test that job list table shows score values for jobs that have them."""
+    result = runner.invoke(app, ["job", "list"])
+    assert result.exit_code == 0
+    out = strip_ansi(result.output)
+    # Job 2 has score with eval/loss=2.1 (may be truncated by Rich table)
+    assert "eval/" in out
+    # Job 1 (no score) should have empty score column — just verify Score header is present
+    assert "Score" in out
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.check_configs")
+def test_job_list_sort_by_metric(_mock_check, _mock_require, _mock_api):
+    """Test that --sort-by sorts jobs by a score metric key in ascending order."""
+    result = runner.invoke(app, ["--format", "json", "job", "list", "--sort-by", "eval/loss"])
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    # Job 2 (eval/loss=2.1) should come before Job 4 (eval/loss=3.5),
+    # and jobs without the metric should be at the end.
+    ids = [j["id"] for j in data]
+    assert ids.index(2) < ids.index(4)
+    # Jobs without eval/loss (1, 3, 5) should be after jobs with it
+    assert ids.index(2) < ids.index(1)
+    assert ids.index(4) < ids.index(1)
+
+
+# ---------------------------------------------------------------------------
+# Info command tests
+# ---------------------------------------------------------------------------
+
+
+def _info_api_get(jobs, files):
+    """Build a fake api.get that routes /jobs/list → jobs and /files → {'files': files}."""
+
+    def _get(path, *args, **kwargs):
+        if path.endswith("/files"):
+            return _mock_api_response({"files": files})
+        return _mock_api_response(jobs)
+
+    return _get
+
+
+@patch(
+    "transformerlab_cli.commands.job.api.get",
+    side_effect=_info_api_get(SAMPLE_JOBS, [{"name": "out.log", "is_dir": False, "size": 42}]),
+)
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_job_info_json_output(_mock_require, _mock_api):
+    """job info --format json emits the job dict with a files key."""
+    result = runner.invoke(app, ["--format", "json", "job", "info", "1"])
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    assert data["id"] == 1
+    assert data["status"] == "RUNNING"
+    assert data["files"] == [{"name": "out.log", "is_dir": False, "size": 42}]
+
+
+@patch(
+    "transformerlab_cli.commands.job.api.get",
+    side_effect=_info_api_get(SAMPLE_JOBS, []),
+)
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_job_info_json_not_found(_mock_require, _mock_api):
+    """job info --format json emits an error object when the job is missing."""
+    result = runner.invoke(app, ["--format", "json", "job", "info", "999"])
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    assert "error" in data
+    assert "999" in data["error"]
+
+
+@patch(
+    "transformerlab_cli.commands.job.api.get",
+    side_effect=_info_api_get(SAMPLE_JOBS, []),
+)
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_job_info_pretty_still_works(_mock_require, _mock_api):
+    """Pretty `job info` still renders the panel and does not regress."""
+    result = runner.invoke(app, ["job", "info", "1"])
+    assert result.exit_code == 0
+    out = strip_ansi(result.output)
+    assert "Job Details for ID 1" in out
+    assert "RUNNING" in out
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +356,16 @@ def test_task_logs_json(_mock_require, _mock_fetch):
     assert result.exit_code == 0
     data = json.loads(result.output.strip())
     assert "sdk line" in data["logs"]
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_logs_response("sdk line"))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_task_logs_hits_task_logs_endpoint(_mock_require, mock_get):
+    """`fetch_task_logs` must hit the one-shot /task_logs endpoint, not the SSE /stream_output."""
+    result = runner.invoke(app, ["job", "task-logs", "42"])
+    assert result.exit_code == 0
+    called_url = mock_get.call_args.args[0] if mock_get.call_args.args else mock_get.call_args.kwargs.get("url", "")
+    assert called_url.endswith("/jobs/42/task_logs"), f"expected /task_logs endpoint, got: {called_url}"
 
 
 @patch("transformerlab_cli.commands.job.fetch_task_logs", return_value=_mock_error_response(404))
