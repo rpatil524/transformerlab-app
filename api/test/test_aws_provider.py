@@ -130,14 +130,13 @@ class TestEnsureKeyPair:
 class TestEnsureIamInstanceProfile:
     def _make_mock_iam(self, role_exists: bool = True, profile_exists: bool = True, role_in_profile: bool = True):
         from botocore.exceptions import ClientError
+
         mock_iam = MagicMock()
 
         if role_exists:
             mock_iam.get_role.return_value = {"Role": {"RoleName": "transformerlab-ec2-role-abc"}}
         else:
-            mock_iam.get_role.side_effect = ClientError(
-                {"Error": {"Code": "NoSuchEntity", "Message": ""}}, "GetRole"
-            )
+            mock_iam.get_role.side_effect = ClientError({"Error": {"Code": "NoSuchEntity", "Message": ""}}, "GetRole")
             mock_iam.create_role.return_value = {"Role": {"RoleName": "transformerlab-ec2-role-abc"}}
 
         if profile_exists:
@@ -205,6 +204,7 @@ class TestEnsureIamInstanceProfile:
 
     def test_inline_policy_scoped_to_team_id(self, provider):
         import json
+
         mock_iam = self._make_mock_iam(role_exists=False, profile_exists=False)
         with patch.object(provider, "_get_iam_client", return_value=mock_iam):
             provider._ensure_iam_instance_profile()
@@ -232,7 +232,9 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
-            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
+            patch.object(
+                provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"
+            ),
         ):
             result = provider.launch_cluster("my-cluster", ClusterConfig(run="python train.py"))
         assert result["instance_id"] == "i-0abc123"
@@ -243,7 +245,9 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
-            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
+            patch.object(
+                provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"
+            ),
         ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py", disk_size=200))
         call_kwargs = mock_ec2.run_instances.call_args[1]
@@ -254,7 +258,9 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
-            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
+            patch.object(
+                provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"
+            ),
         ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
         call_kwargs = mock_ec2.run_instances.call_args[1]
@@ -265,7 +271,9 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
-            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
+            patch.object(
+                provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"
+            ),
         ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
         tags = mock_ec2.run_instances.call_args[1]["TagSpecifications"][0]["Tags"]
@@ -283,7 +291,10 @@ class TestLaunchCluster:
         ):
             provider.launch_cluster("my-cluster", ClusterConfig(run="python train.py"))
         call_kwargs = mock_ec2.run_instances.call_args[1]
-        assert call_kwargs["IamInstanceProfile"]["Arn"] == "arn:aws:iam::123:instance-profile/transformerlab-ec2-profile-abc"
+        assert (
+            call_kwargs["IamInstanceProfile"]["Arn"]
+            == "arn:aws:iam::123:instance-profile/transformerlab-ec2-profile-abc"
+        )
         mock_ensure_iam.assert_called_once()
 
     def test_raises_runtime_error_when_iam_profile_fails(self, provider):
@@ -317,7 +328,9 @@ class TestLaunchCluster:
         with (
             patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
             patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
-            patch.object(provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"),
+            patch.object(
+                provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"
+            ),
             patch("transformerlab.compute_providers.aws.time.sleep") as mock_sleep,
         ):
             result = provider.launch_cluster("my-cluster", ClusterConfig(run="train.py"))
