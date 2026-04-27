@@ -168,8 +168,8 @@ export default function ProviderDetailsModal({
       },
       {
         value: 'runpod',
-        label: 'RunPod',
-        description: 'Run workloads on RunPod infrastructure.',
+        label: 'Runpod',
+        description: 'Run workloads on Runpod infrastructure.',
       },
       {
         value: 'dstack',
