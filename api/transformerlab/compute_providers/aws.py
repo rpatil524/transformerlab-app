@@ -284,6 +284,9 @@ mkdir -p /workspace
 # Ubuntu 24+ marks system Python as externally managed (PEP 668).
 # Allow bootstrap pip installs used by remote setup commands.
 export PIP_BREAK_SYSTEM_PACKAGES=1
+# Install uv for task setups that use `uv pip ...`.
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 {env_exports}
 {setup_block}
 ({run_cmd}) 2>&1 | tee /workspace/run_logs.txt

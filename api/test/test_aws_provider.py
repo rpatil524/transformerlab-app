@@ -208,6 +208,11 @@ class TestUserDataScript:
         user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))
         assert "export PIP_BREAK_SYSTEM_PACKAGES=1" in user_data
 
+    def test_installs_uv_and_exports_path(self):
+        user_data = AWSProvider._build_user_data(ClusterConfig(run="echo hello"))
+        assert "curl -LsSf https://astral.sh/uv/install.sh | sh" in user_data
+        assert 'export PATH="$HOME/.local/bin:$PATH"' in user_data
+
 
 class TestStopCluster:
     def test_terminates_instance_by_cluster_name(self, provider):
