@@ -8,6 +8,8 @@ import json
 import time
 from typing import Any, Dict, List, Optional, Union
 
+from transformerlab.shared.ssh_policy import get_add_if_verified_policy
+
 from .base import ComputeProvider
 from .models import (
     ClusterConfig,
@@ -162,7 +164,7 @@ def _ssh_read_file(host: str, key_bytes: bytes, remote_path: str, tail_lines: in
         return "Failed to load SSH key."
 
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.set_missing_host_key_policy(get_add_if_verified_policy())
     try:
         ssh.connect(hostname=host, port=22, username="ubuntu", pkey=pkey, timeout=15, banner_timeout=15)
         cmd = f"tail -n {tail_lines} {remote_path} 2>/dev/null || echo 'No log file yet.'"
