@@ -286,7 +286,10 @@ mkdir -p /workspace
 export PIP_BREAK_SYSTEM_PACKAGES=1
 # Install uv for task setups that use `uv pip ...`.
 curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:/root/.local/bin:/home/ubuntu/.local/bin:$PATH"
+# Make uv available even when later commands run with a different shell/user PATH.
+if [ -x /root/.local/bin/uv ]; then ln -sf /root/.local/bin/uv /usr/local/bin/uv; fi
+if [ -x /root/.local/bin/uvx ]; then ln -sf /root/.local/bin/uvx /usr/local/bin/uvx; fi
 {env_exports}
 {setup_block}
 ({run_cmd}) 2>&1 | tee /workspace/run_logs.txt
