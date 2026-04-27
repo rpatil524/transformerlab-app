@@ -1,11 +1,5 @@
 import React, { useState } from 'react';
-import {
-  FormControl,
-  FormLabel,
-  Option,
-  Select,
-  Typography,
-} from '@mui/joy';
+import { FormControl, FormLabel, Option, Select, Typography } from '@mui/joy';
 
 export interface ProviderTypeOption {
   value: string;
