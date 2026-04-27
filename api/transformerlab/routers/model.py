@@ -1,8 +1,9 @@
+import os
 from typing import Annotated
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from huggingface_hub import HfApi
 
-from transformerlab.services import model_service, asset_upload_service
+from transformerlab.services import model_service, asset_upload_service, asset_download_service
 from transformerlab.services.cache_service import cached
 from transformerlab.services.permission_service import require_permission
 from transformerlab.services.upload_service import (
@@ -267,3 +268,32 @@ async def model_finalize(model_id: str):
     await model_obj.set_metadata(name=metadata.get("name", model_id), json_data=json_data)
 
     return {"status": "success", "architecture": architecture}
+
+
+@router.get("/model/files", summary="List all files within a model directory.")
+async def model_files(model_id: str):
+    try:
+        model_obj = await Model.get(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"model {model_id} not found")
+    asset_dir = os.path.abspath(await model_obj.get_dir())
+    return await asset_download_service.list_files(asset_dir)
+
+
+@router.get("/model/file", summary="Stream one file from a model directory.")
+async def model_file(
+    model_id: str,
+    relpath: str,
+    range: str | None = Header(default=None),  # noqa: A002 — shadows builtin; FastAPI injects Range header
+):
+    try:
+        model_obj = await Model.get(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"model {model_id} not found")
+    asset_dir = os.path.abspath(await model_obj.get_dir())
+    try:
+        return await asset_download_service.stream_file(asset_dir, relpath, range)
+    except asset_download_service.InvalidRelpathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"{relpath} not found in model {model_id}")
