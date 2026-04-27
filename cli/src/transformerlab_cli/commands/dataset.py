@@ -1,4 +1,5 @@
 import json
+import os
 
 import typer
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
@@ -6,7 +7,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
 import transformerlab_cli.util.api as api
 from transformerlab_cli.state import cli_state
 from transformerlab_cli.util.config import check_configs
-from transformerlab_cli.util import asset_paths, chunked_upload
+from transformerlab_cli.util import asset_paths, chunked_download, chunked_upload
 from transformerlab_cli.util.ui import console, render_table, render_object
 
 app = typer.Typer()
@@ -242,47 +243,52 @@ def command_dataset_upload(
 
 
 # ──────────────────────────────────────────────
-# download (from HuggingFace Hub)
+# download (server → local)
 # ──────────────────────────────────────────────
 
 
 @app.command("download")
 def command_dataset_download(
-    dataset_id: str = typer.Argument(..., help="HuggingFace dataset ID, e.g. 'Trelis/touch-rugby-rules'"),
-    config_name: str = typer.Option(None, "--config", help="Dataset config/subset name (optional)"),
+    dataset_id: str = typer.Argument(..., help="The dataset ID on the server."),
+    dest_dir: str = typer.Argument(..., help="Local destination directory."),
 ):
-    """Download a dataset from the HuggingFace Hub to the server."""
+    """Download a dataset from the server to local disk under <dest>/<dataset_id>/."""
     check_configs(output_format=cli_state.output_format)
 
-    params = f"?dataset_id={dataset_id}"
-    if config_name:
-        params += f"&config_name={config_name}"
-
-    if cli_state.output_format != "json":
-        with console.status(
-            f"[bold success]Downloading '{dataset_id}' from HuggingFace...[/bold success]", spinner="dots"
-        ):
-            response = api.get(f"/data/download{params}", timeout=300.0)
-    else:
-        response = api.get(f"/data/download{params}", timeout=300.0)
-
-    if response.status_code == 200:
-        body = response.json()
-        if body.get("status") == "success":
-            if cli_state.output_format == "json":
-                print(json.dumps(body))
-            else:
-                console.print(f"[success]✓[/success] Dataset [bold]{dataset_id}[/bold] downloaded successfully.")
-        else:
-            msg = body.get("message", "Unknown error")
-            if cli_state.output_format == "json":
-                print(json.dumps({"error": msg}))
-            else:
-                console.print(f"[error]Error:[/error] {msg}")
-            raise typer.Exit(1)
-    else:
-        if cli_state.output_format == "json":
-            print(json.dumps({"error": f"Failed to download dataset. Status code: {response.status_code}"}))
-            raise typer.Exit(1)
-        console.print(f"[error]Error:[/error] Failed to download dataset. {_extract_error(response)}")
+    list_resp = api.get(f"/data/files?dataset_id={dataset_id}")
+    if list_resp.status_code != 200:
+        console.print(f"[error]Error:[/error] {_extract_error(list_resp)}")
         raise typer.Exit(1)
+    files = list_resp.json()
+    if not files:
+        console.print("[warning]Dataset has no files to download.[/warning]")
+        return
+
+    base = os.path.join(dest_dir, dataset_id)
+    os.makedirs(base, exist_ok=True)
+    total_bytes = sum(f["size"] for f in files)
+
+    with Progress(
+        TextColumn("[bold success]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+    ) as progress:
+        bar = progress.add_task(f"Downloading {dataset_id}", total=total_bytes)
+        for f in files:
+            relpath = f["relpath"]
+            size = f["size"]
+            target = os.path.join(base, *relpath.split("/"))
+            try:
+                chunked_download.download_one_file(
+                    f"/data/file?dataset_id={dataset_id}&relpath={relpath}",
+                    target_path=target,
+                    server_size=size,
+                    progress=progress,
+                    progress_task=bar,
+                )
+            except Exception as exc:
+                console.print(f"[error]Failed to download {relpath}: {exc}")
+                raise typer.Exit(1)
+
+    console.print(f"[success]✓[/success] Downloaded {len(files)} file(s) to {base}.")
