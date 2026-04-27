@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Table,
   ButtonGroup,
@@ -19,6 +19,8 @@ import {
   MoreVerticalIcon,
   ChevronRightIcon,
   ChevronDownIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
 } from 'lucide-react';
 import SafeJSONParse from 'renderer/components/Shared/SafeJSONParse';
 
@@ -37,10 +39,9 @@ type TaskRow = {
 
 function jobBelongsToTask(job: any, task: TaskRow): boolean {
   const jd = job?.job_data ?? {};
-  if (jd.task_id && String(jd.task_id) === String(task.id)) return true;
-  const taskName = (task.title?.trim() || task.name?.trim()) ?? '';
-  if (taskName && jd.template_name && jd.template_name === taskName)
-    return true;
+  const name = task.name?.trim() ?? '';
+  if (name && jd.task_name && jd.task_name === name) return true;
+  if (name && jd.template_name && jd.template_name === name) return true;
   return false;
 }
 
@@ -54,10 +55,29 @@ type TaskTemplateListProps = {
   loading: boolean;
   interactTasks?: boolean;
   allJobs?: any[];
+  allJobsLoading?: boolean;
   expandedTaskIds?: Set<string>;
   onToggleTaskExpanded?: (taskId: string) => void;
   renderJobsForTask?: (taskId: string, jobs: any[]) => React.ReactNode;
 };
+
+function relativeTime(ts: string | undefined): string {
+  if (!ts) return '—';
+  const ms = Date.now() - new Date(ts).getTime();
+  if (ms < 0) return 'just now';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const days = Math.floor(hr / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+}
 
 function getTitle(task: TaskRow) {
   if (task.title && task.title.trim() !== '') {
@@ -76,10 +96,42 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
   loading,
   interactTasks = false,
   allJobs = [],
+  allJobsLoading = false,
   expandedTaskIds = new Set(),
   onToggleTaskExpanded,
   renderJobsForTask,
 }) => {
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const lastRunByTaskName = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const job of allJobs) {
+      if (job?.placeholder) continue;
+      const jd = job?.job_data ?? {};
+      const taskName = (jd.task_name || jd.template_name || '').trim();
+      if (!taskName) continue;
+      const ts: string = job.created_at || job.created || '';
+      if (!ts) continue;
+      if (!map[taskName] || ts > map[taskName]) {
+        map[taskName] = ts;
+      }
+    }
+    return map;
+  }, [allJobs]);
+
+  const sortedTasks = useMemo(() => {
+    return [...tasksList].sort((a, b) => {
+      const tsA = lastRunByTaskName[a.name?.trim() ?? ''] ?? '';
+      const tsB = lastRunByTaskName[b.name?.trim() ?? ''] ?? '';
+      if (!tsA && !tsB) return 0;
+      if (!tsA) return 1;
+      if (!tsB) return -1;
+      return sortDir === 'desc'
+        ? tsB.localeCompare(tsA)
+        : tsA.localeCompare(tsB);
+    });
+  }, [tasksList, sortDir, lastRunByTaskName]);
+
   const getResourcesInfo = (task: TaskRow) => {
     if (task.type !== 'REMOTE') {
       return 'N/A';
@@ -174,14 +226,16 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
 
   if (loading) {
     return (
-      <Table stickyHeader>
+      <Table stickyHeader sx={{ tableLayout: 'fixed', width: '100%' }}>
         <thead>
           <tr>
-            <th style={{ width: '150px' }}>Name</th>
-            {interactTasks && <th>Provider</th>}
-            <th>Command</th>
-            <th>Resources</th>
-            <th style={{ textAlign: 'right', width: '320px' }}>Actions</th>
+            <th style={{ width: '20%' }}>Name</th>
+            {interactTasks && <th style={{ width: '10%' }}>Provider</th>}
+            <th style={{ width: '6%', textAlign: 'center' }}>Runs</th>
+            <th style={{ width: '14%' }}>Last Run</th>
+            <th style={{ width: '22%' }}>Command</th>
+            <th style={{ width: '14%' }}>Resources</th>
+            <th style={{ width: '24%', textAlign: 'right' }}>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -195,6 +249,12 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
                   <Skeleton variant="text" level="title-sm" />
                 </td>
               )}
+              <td>
+                <Skeleton variant="text" level="body-sm" />
+              </td>
+              <td>
+                <Skeleton variant="text" level="body-sm" />
+              </td>
               <td>
                 <Skeleton variant="text" level="body-sm" />
               </td>
@@ -217,23 +277,48 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
   }
 
   return (
-    <Table stickyHeader>
+    <Table
+      stickyHeader
+      hoverRow
+      sx={{
+        tableLayout: 'fixed',
+        width: '100%',
+        // Thicker top border when one collapsed task immediately follows another
+        '& tbody tr[data-task-row] + tr[data-task-row] > td': {
+          borderTopWidth: '2px',
+        },
+      }}
+    >
       <thead>
         <tr>
-          <th style={{ width: '150px' }}>Name</th>
-          {interactTasks && <th>Provider</th>}
-          <th>Command</th>
-          <th>Resources</th>
-          <th style={{ textAlign: 'right', width: '320px' }}>Actions</th>
+          <th style={{ width: '20%' }}>Name</th>
+          {interactTasks && <th style={{ width: '10%' }}>Provider</th>}
+          <th style={{ width: '6%', textAlign: 'center' }}>Runs</th>
+          <th
+            style={{ width: '14%', cursor: 'pointer', userSelect: 'none' }}
+            onClick={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              Last Run
+              {sortDir === 'desc' ? (
+                <ArrowDownIcon size={12} />
+              ) : (
+                <ArrowUpIcon size={12} />
+              )}
+            </Box>
+          </th>
+          <th style={{ width: '22%' }}>Command</th>
+          <th style={{ width: '14%' }}>Resources</th>
+          <th style={{ width: '24%', textAlign: 'right' }}>Actions</th>
         </tr>
       </thead>
       <tbody>
-        {tasksList.map((row) => {
+        {sortedTasks.map((row) => {
           const isExpanded = expandedTaskIds.has(row.id);
           const taskJobs = allJobs.filter((job) => jobBelongsToTask(job, row));
           return (
             <React.Fragment key={row.id}>
-              <tr>
+              <tr data-task-row="">
                 <td>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     {onToggleTaskExpanded && (
@@ -254,17 +339,37 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
                     <Typography level="title-sm" sx={{ overflow: 'clip' }}>
                       {getTitle(row)}
                     </Typography>
-                    {onToggleTaskExpanded && taskJobs.length > 0 && (
-                      <Chip
-                        size="sm"
-                        variant="soft"
-                        color="neutral"
-                        sx={{ ml: 0.5 }}
-                      >
-                        {taskJobs.length}
-                      </Chip>
-                    )}
                   </Box>
+                </td>
+                <td style={{ textAlign: 'center' }}>
+                  <Typography level="body-sm" sx={{ color: 'text.secondary' }}>
+                    {allJobsLoading ? (
+                      <Skeleton
+                        variant="text"
+                        level="body-sm"
+                        width={16}
+                        sx={{ display: 'inline-block' }}
+                      />
+                    ) : taskJobs.length > 0 ? (
+                      taskJobs.length
+                    ) : (
+                      '—'
+                    )}
+                  </Typography>
+                </td>
+                <td>
+                  <Typography level="body-sm" sx={{ color: 'text.secondary' }}>
+                    {allJobsLoading ? (
+                      <Skeleton
+                        variant="text"
+                        level="body-sm"
+                        width={40}
+                        sx={{ display: 'inline-block' }}
+                      />
+                    ) : (
+                      relativeTime(lastRunByTaskName[row.name?.trim() ?? ''])
+                    )}
+                  </Typography>
                 </td>
                 {interactTasks && (
                   <td style={{ overflow: 'clip' }}>
@@ -337,15 +442,24 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
               </tr>
               {isExpanded && renderJobsForTask && (
                 <tr>
-                  <td colSpan={99} style={{ padding: 0, border: 'none' }}>
+                  <td
+                    colSpan={99}
+                    style={{ padding: 0, border: 'none', width: '100%' }}
+                  >
                     <Box
                       sx={{
+                        display: 'block',
+                        width: '100%',
                         pl: 4,
                         pr: 1,
                         py: 1,
                         bgcolor: 'background.level1',
-                        borderBottom: '1px solid',
-                        borderColor: 'divider',
+                        borderBottom: '2px solid',
+                        borderColor: 'neutral.300',
+                        '& table': {
+                          tableLayout: 'auto',
+                          width: '100%',
+                        },
                       }}
                     >
                       {taskJobs.length === 0 ? (

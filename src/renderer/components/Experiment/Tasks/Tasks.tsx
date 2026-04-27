@@ -1381,6 +1381,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
           // }
           loading={templatesIsLoading}
           allJobs={filteredJobsForDisplay}
+          allJobsLoading={jobsIsLoading}
           expandedTaskIds={expandedTaskIds}
           onToggleTaskExpanded={handleToggleTaskExpanded}
           renderJobsForTask={(_, taskJobs) => (
@@ -1448,7 +1449,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
           )}
         />
       </Sheet>
-      <JobsPanel
+      {/* <JobsPanel
         title="Jobs"
         jobs={filteredJobsForDisplay as any}
         loading={jobsIsLoading}
@@ -1579,7 +1580,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
             onStopPendingChange={handleStopPendingChange}
           />
         )}
-      />
+      /> */}
       <ViewSweepResultsModal
         jobId={viewSweepResultsFromJob}
         setJobId={(jobId: string | null) => setViewSweepResultsFromJob(jobId)}
