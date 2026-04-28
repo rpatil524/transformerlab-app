@@ -69,10 +69,11 @@ export default function JobDetailPage() {
     experimentInfo?.id ? chatAPI.Endpoints.Task.List(experimentInfo.id) : null,
   );
 
-  const { backHref, backLabel } = useMemo(() => {
+  const { backHref, backLabel, taskCrumb } = useMemo(() => {
     const fallback = {
       backHref: `/experiment/${experimentName}/tasks`,
       backLabel: `Back to ${experimentName} tasks`,
+      taskCrumb: null as { name: string; href: string } | null,
     };
     if (!job) return fallback;
     const jd: any = job.job_data ?? {};
@@ -97,9 +98,11 @@ export default function JobDetailPage() {
     }
     if (!taskId) return fallback;
     const label = taskName || 'task';
+    const href = `/experiment/${experimentName}/tasks/${taskId}/runs`;
     return {
-      backHref: `/experiment/${experimentName}/tasks/${taskId}/runs`,
+      backHref: href,
       backLabel: `Back to ${label} runs`,
+      taskCrumb: { name: label, href },
     };
   }, [job, allTemplates, experimentInfo?.id, experimentName]);
 
@@ -180,6 +183,24 @@ export default function JobDetailPage() {
           <Typography level="title-sm" sx={{ color: 'text.secondary' }}>
             {experimentName}
           </Typography>
+          {taskCrumb && (
+            <>
+              <Typography level="title-sm" sx={{ color: 'text.tertiary' }}>
+                /
+              </Typography>
+              <Typography
+                level="title-sm"
+                sx={{
+                  color: 'text.secondary',
+                  cursor: 'pointer',
+                  '&:hover': { textDecoration: 'underline' },
+                }}
+                onClick={() => navigate(taskCrumb.href)}
+              >
+                {taskCrumb.name}
+              </Typography>
+            </>
+          )}
           <Typography level="title-sm" sx={{ color: 'text.tertiary' }}>
             /
           </Typography>
