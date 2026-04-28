@@ -1896,7 +1896,7 @@ class SkyPilotProvider(ComputeProvider):
 
         return all_clusters
 
-    def check(self) -> bool:
+    def check(self) -> tuple[bool, str | None]:
         """Check if the SkyPilot provider is active and accessible."""
         try:
             # Use the /api/health endpoint to check if the server is healthy
@@ -1906,16 +1906,32 @@ class SkyPilotProvider(ComputeProvider):
             if hasattr(response, "json"):
                 health_data = response.json()
                 # Check if the status is "healthy"
-                return health_data.get("status") == "healthy"
+                status = health_data.get("status")
+                if status == "healthy":
+                    return True, None
+                reason = f"SkyPilot provider check failed: health status is '{status}'"
+                print(reason)
+                return False, reason
             else:
                 # If response doesn't have json method, check status code
-                return hasattr(response, "status_code") and response.status_code == 200
-        except requests.exceptions.ConnectionError:
+                if hasattr(response, "status_code") and response.status_code == 200:
+                    return True, None
+                status_code = getattr(response, "status_code", "unknown")
+                reason = f"SkyPilot provider check failed: unexpected health response status_code={status_code}"
+                print(reason)
+                return False, reason
+        except requests.exceptions.ConnectionError as e:
             # Connection error means server is not accessible
-            return False
-        except requests.exceptions.Timeout:
+            reason = f"SkyPilot provider check failed: connection error: {str(e)}"
+            print(reason)
+            return False, reason
+        except requests.exceptions.Timeout as e:
             # Timeout means server is not responding
-            return False
-        except Exception:
+            reason = f"SkyPilot provider check failed: timeout: {str(e)}"
+            print(reason)
+            return False, reason
+        except Exception as e:
             # For any other exceptions, assume provider is not active
-            return False
+            reason = f"SkyPilot provider check failed: {type(e).__name__}: {str(e)}"
+            print(reason)
+            return False, reason

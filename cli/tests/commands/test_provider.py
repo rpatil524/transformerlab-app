@@ -92,6 +92,57 @@ def test_provider_add_non_interactive(_mock_check, _mock_api):
     assert "p3" in result.output
 
 
+@patch("transformerlab_cli.commands.provider.api.get", return_value=_mock_response(200, {"status": True}))
+@patch("transformerlab_cli.commands.provider.api.post_json", return_value=_mock_response(200, {"id": "p3"}))
+@patch("transformerlab_cli.commands.provider.check_configs")
+def test_provider_add_runs_provider_check(_mock_check, mock_post, mock_get):
+    """Test add runs provider health check after creation."""
+    result = runner.invoke(
+        app,
+        [
+            "provider",
+            "add",
+            "--no-interactive",
+            "--name",
+            "test-provider",
+            "--type",
+            "local",
+            "--config",
+            "{}",
+        ],
+    )
+    assert result.exit_code == 0
+    mock_post.assert_called_once()
+    mock_get.assert_called_once_with("/compute_provider/providers/p3/check", timeout=60.0)
+
+
+@patch(
+    "transformerlab_cli.commands.provider.api.get",
+    return_value=_mock_response(200, {"status": False, "reason": "Bad API key"}),
+)
+@patch("transformerlab_cli.commands.provider.api.post_json", return_value=_mock_response(200, {"id": "p3"}))
+@patch("transformerlab_cli.commands.provider.check_configs")
+def test_provider_add_fails_when_provider_check_unhealthy(_mock_check, _mock_post, _mock_get):
+    """Test add surfaces provider check reason when unhealthy."""
+    result = runner.invoke(
+        app,
+        [
+            "provider",
+            "add",
+            "--no-interactive",
+            "--name",
+            "test-provider",
+            "--type",
+            "local",
+            "--config",
+            "{}",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Provider health check failed" in result.output
+    assert "Bad API key" in result.output
+
+
 @patch("transformerlab_cli.commands.provider.api.delete", return_value=_mock_response(200))
 @patch("transformerlab_cli.commands.provider.check_configs")
 def test_provider_delete(_mock_check, _mock_api):
@@ -117,6 +168,19 @@ def test_provider_disable(_mock_check, _mock_api):
     result = runner.invoke(app, ["provider", "disable", "p1"])
     assert result.exit_code == 0
     assert "disabled" in result.output
+
+
+@patch(
+    "transformerlab_cli.commands.provider.api.get",
+    return_value=_mock_response(200, {"status": False, "reason": "Bad API key"}),
+)
+@patch("transformerlab_cli.commands.provider.check_configs")
+def test_provider_check_shows_reason_and_fails(_mock_check, _mock_api):
+    """Test provider check shows unhealthy reason and exits non-zero."""
+    result = runner.invoke(app, ["provider", "check", "p1"])
+    assert result.exit_code == 1
+    assert "Provider check failed" in result.output
+    assert "Bad API key" in result.output
 
 
 @patch("transformerlab_cli.commands.provider.api.patch", return_value=_mock_response(200))
