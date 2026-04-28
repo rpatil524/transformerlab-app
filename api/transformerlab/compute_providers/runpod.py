@@ -760,18 +760,7 @@ class RunpodProvider(ComputeProvider):
             self._make_request("GET", "/pods", timeout=5)
             # If we get a response (even empty), the API key is valid
             return True, None
-        except requests.exceptions.HTTPError as e:
-            # 401/403 means invalid API key
-            if hasattr(e, "response") and e.response.status_code in [401, 403]:
-                reason = f"Runpod provider check failed: {e.response.text}"
-                print(reason)
-                return False, reason
-            # Other errors might be temporary
-            reason = f"Runpod provider check failed: {e.response.text}"
-            print(reason)
-            return False, reason
         except Exception as e:
             reason = f"Runpod provider check failed: {e}"
             print(reason)
-            # Connection errors, timeouts, etc.
             return False, reason
