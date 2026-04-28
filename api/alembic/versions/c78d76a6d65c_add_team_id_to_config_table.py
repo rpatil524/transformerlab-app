@@ -110,10 +110,9 @@ def downgrade() -> None:
     if has_index(connection, "config", "ix_config_key"):
         op.drop_index("ix_config_key", table_name="config")
 
-    # SQLite < 3.35.0 doesn't support DROP COLUMN, so recreate the table.
-    # PostgreSQL (and modern SQLite) support DROP COLUMN directly — but since
-    # this branch runs on all SQLite versions we keep the recreate path here
-    # for compatibility.
+    # SQLite: recreate the table without the new columns (works on all
+    # SQLite versions, including those that predate ALTER TABLE DROP COLUMN).
+    # PostgreSQL: use DROP COLUMN directly.
     if connection.dialect.name == "sqlite":
         connection.execute(
             sa.text("""
