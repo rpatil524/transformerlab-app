@@ -62,13 +62,23 @@ async def get_cluster_resources(
 async def stop_cluster(
     provider_id: str,
     cluster_name: str,
+    job_id: Optional[Union[str, int]] = Query(
+        None, description="Job ID used by local provider to resolve job workspace"
+    ),
     user_and_team=Depends(get_user_and_team),
     session: AsyncSession = Depends(get_async_session),
 ):
     """Stop a running cluster."""
     team_id = user_and_team["team_id"]
     user_id_str = str(user_and_team["user"].id)
-    return await cluster_management_service.stop_cluster(session, team_id, user_id_str, provider_id, cluster_name)
+    return await cluster_management_service.stop_cluster(
+        session,
+        team_id,
+        user_id_str,
+        provider_id,
+        cluster_name,
+        job_id=job_id,
+    )
 
 
 @router.post("/{cluster_name}/jobs")

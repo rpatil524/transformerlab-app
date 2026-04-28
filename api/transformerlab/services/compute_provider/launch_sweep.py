@@ -164,9 +164,7 @@ async def launch_sweep_jobs(
 
                 run_suffix = f"sweep-{i + 1}"
                 parent_job_short_id = job_service.get_short_job_id(parent_job_id)
-                formatted_cluster_name = (
-                    f"{sanitize_cluster_basename(base_name)}-{run_suffix}-job-{parent_job_short_id}"
-                )
+                formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-{run_suffix}-{parent_job_short_id}"
 
                 child_job_id = await job_service.job_create(
                     type="REMOTE",

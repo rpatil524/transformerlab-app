@@ -93,7 +93,7 @@ run: "python demo-generate-task/fake_generate.py"
       queueDialog.getByRole('combobox', { name: 'Compute Provider' }),
     ).toHaveText('Local', { timeout: 5000 });
     await queueDialog.getByRole('button', { name: 'Submit' }).click();
-    const jobNamePrefix = `${taskName}-job-`;
+    const jobNamePrefix = `${taskName}-`;
     const queuedJobRow = page.locator('tr', {
       has: page.getByRole('button', { name: 'Output' }),
       hasText: jobNamePrefix,
