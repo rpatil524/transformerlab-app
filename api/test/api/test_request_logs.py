@@ -63,7 +63,7 @@ class MinimalProvider(ComputeProvider):
 
 
 def _make_job_dict(
-    job_id: str = "test-job-1",
+    job_id: str = "test-1",
     experiment_id: str = "exp-1",
     provider_id: str = "prov-1",
     provider_type: str = "skypilot",
@@ -221,7 +221,7 @@ class TestSkyPilotGetRequestLogs:
 class TestRequestLogsEndpoint:
     def test_nonexistent_job_returns_404(self, client):
         """Request logs for a non-existent job should return 404."""
-        resp = client.get("/experiment/alpha/jobs/nonexistent-job-id/request_logs")
+        resp = client.get("/experiment/alpha/jobs/nonexistent-id/request_logs")
         assert resp.status_code == 404
 
     @patch("transformerlab.routers.experiment.jobs.job_service.job_get_cached", new_callable=AsyncMock)
@@ -261,7 +261,7 @@ class TestRequestLogsEndpoint:
         mock_provider.get_request_logs.side_effect = NotImplementedError("not supported")
         mock_instance.return_value = mock_provider
 
-        resp = client.get("/experiment/exp-1/jobs/test-job-1/request_logs")
+        resp = client.get("/experiment/exp-1/jobs/test-1/request_logs")
         assert resp.status_code == 400
         assert "does not support request logs" in resp.json()["detail"]
 
@@ -276,7 +276,7 @@ class TestRequestLogsEndpoint:
         mock_provider.get_request_logs.return_value = "Provisioning cluster...\nCluster ready."
         mock_instance.return_value = mock_provider
 
-        resp = client.get("/experiment/exp-1/jobs/test-job-1/request_logs")
+        resp = client.get("/experiment/exp-1/jobs/test-1/request_logs")
         assert resp.status_code == 200
         data = resp.json()
         assert data["request_id"] == "req-abc-123"
@@ -293,7 +293,7 @@ class TestRequestLogsEndpoint:
         mock_provider.get_request_logs.side_effect = RuntimeError("connection timed out")
         mock_instance.return_value = mock_provider
 
-        resp = client.get("/experiment/exp-1/jobs/test-job-1/request_logs")
+        resp = client.get("/experiment/exp-1/jobs/test-1/request_logs")
         assert resp.status_code == 502
         assert "connection timed out" in resp.json()["detail"]
 
@@ -311,7 +311,7 @@ class TestRequestLogsEndpoint:
         mock_provider.get_request_logs.return_value = "fallback logs"
         mock_instance.return_value = mock_provider
 
-        resp = client.get("/experiment/exp-1/jobs/test-job-1/request_logs")
+        resp = client.get("/experiment/exp-1/jobs/test-1/request_logs")
         assert resp.status_code == 200
         assert resp.json()["request_id"] == "orch-fallback-id"
         mock_provider.get_request_logs.assert_called_once_with("orch-fallback-id", tail_lines=400)
@@ -327,6 +327,6 @@ class TestRequestLogsEndpoint:
         mock_provider.get_request_logs.return_value = "logs"
         mock_instance.return_value = mock_provider
 
-        resp = client.get("/experiment/exp-1/jobs/test-job-1/request_logs?tail_lines=1000")
+        resp = client.get("/experiment/exp-1/jobs/test-1/request_logs?tail_lines=1000")
         assert resp.status_code == 200
         mock_provider.get_request_logs.assert_called_once_with("req-abc-123", tail_lines=1000)
