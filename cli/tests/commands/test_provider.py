@@ -70,9 +70,10 @@ def test_provider_info_not_found(_mock_check, _mock_api):
     assert "not found" in result.output
 
 
+@patch("transformerlab_cli.commands.provider.api.get", return_value=_mock_response(200, {"status": True}))
 @patch("transformerlab_cli.commands.provider.api.post_json", return_value=_mock_response(200, {"id": "p3"}))
 @patch("transformerlab_cli.commands.provider.check_configs")
-def test_provider_add_non_interactive(_mock_check, _mock_api):
+def test_provider_add_non_interactive(_mock_check, _mock_api, _mock_get):
     """Test adding a provider non-interactively."""
     result = runner.invoke(
         app,
