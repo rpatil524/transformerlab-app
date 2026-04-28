@@ -234,7 +234,7 @@ def add_task_from_directory(
         raise typer.Exit(1)
 
 
-def add_task_from_github(repo_url: str, experiment_id: str) -> None:
+def add_task_from_github(repo_url: str, experiment_id: str, interactive: bool = True) -> None:
     """Add a task from a GitHub repository URL."""
     with console.status("[bold success]Creating task from GitHub...[/bold success]", spinner="dots"):
         response = api.post_json(
@@ -250,7 +250,7 @@ def add_task_from_github(repo_url: str, experiment_id: str) -> None:
         except Exception:
             detail = response.text
         if "task.yaml" in str(detail).lower():
-            if cli_state.output_format != "json":
+            if interactive and cli_state.output_format != "json":
                 console.print(
                     "[warning]task.yaml was not found in the repository.[/warning]\n"
                     "You can create a task using a default task.yaml template."
@@ -466,7 +466,7 @@ def command_task_add(
     current_experiment = require_current_experiment()
 
     if from_git:
-        add_task_from_github(from_git, experiment_id=current_experiment)
+        add_task_from_github(from_git, experiment_id=current_experiment, interactive=not no_interactive)
     elif task_directory:
         add_task_from_directory(
             task_directory, experiment_id=current_experiment, dry_run=dry_run, interactive=not no_interactive
