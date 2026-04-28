@@ -45,7 +45,7 @@ jobs:
       # PostgreSQL connection settings (picked up by constants.py)
       DATABASE_HOST: localhost
       DATABASE_PORT: "5432"
-      DATABASE_DB: testdb
+      DATABASE_NAME: testdb
       DATABASE_USER: testuser
       DATABASE_PASSWORD: testpass
     strategy:

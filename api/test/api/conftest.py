@@ -16,10 +16,10 @@ os.environ["TRANSFORMERLAB_REFRESH_SECRET"] = "test-refresh-secret-for-testing-o
 os.environ["EMAIL_METHOD"] = "dev"  # Use dev mode for tests (no actual email sending)
 
 # Determine database backend: if PostgreSQL env vars are set, use Postgres; otherwise SQLite.
-_use_postgres = all(os.environ.get(k) for k in ("DATABASE_HOST", "DATABASE_DB", "DATABASE_USER", "DATABASE_PASSWORD"))
+_use_postgres = all(os.environ.get(k) for k in ("DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER", "DATABASE_PASSWORD"))
 
 if _use_postgres:
-    # Let constants.py build the PostgreSQL URL from DATABASE_HOST/DB/USER/PASSWORD
+    # Let constants.py build the PostgreSQL URL from DATABASE_HOST/NAME/USER/PASSWORD
     test_db_path = None
 else:
     # Use temporary file-based SQLite database for tests (easier to debug than in-memory)

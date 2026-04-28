@@ -62,7 +62,7 @@ def test_env_handles_percent_encoded_password_in_database_url():
         {
             "DATABASE_HOST": "fake-host.example.com",
             "DATABASE_PORT": "5432",
-            "DATABASE_DB": "fakedb",
+            "DATABASE_NAME": "fakedb",
             "DATABASE_USER": "fakeuser",
             # Includes every character class that broke prod: `}`, `?`, `!`, `{`.
             "DATABASE_PASSWORD": "s32}-M0X?S!D{6Lej",
@@ -101,7 +101,7 @@ def test_database_url_is_percent_encoded_for_special_passwords(monkeypatch):
     """
     monkeypatch.setenv("DATABASE_HOST", "fake-host.example.com")
     monkeypatch.setenv("DATABASE_PORT", "5432")
-    monkeypatch.setenv("DATABASE_DB", "fakedb")
+    monkeypatch.setenv("DATABASE_NAME", "fakedb")
     monkeypatch.setenv("DATABASE_USER", "fakeuser")
     monkeypatch.setenv("DATABASE_PASSWORD", "a}b?c!d{e")
 
