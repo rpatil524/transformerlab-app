@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/joy/Box';
 import CircularProgress from '@mui/joy/CircularProgress';
@@ -65,6 +65,44 @@ export default function JobDetailPage() {
     : ['overview', 'logs'];
   const [activeSection, setActiveSection] = useState<SectionKey | null>(null);
 
+  const { data: allTemplates } = useSWRWithAuth(
+    experimentInfo?.id ? chatAPI.Endpoints.Task.List(experimentInfo.id) : null,
+  );
+
+  const { backHref, backLabel } = useMemo(() => {
+    const fallback = {
+      backHref: `/experiment/${experimentName}/tasks`,
+      backLabel: `Back to ${experimentName} tasks`,
+    };
+    if (!job) return fallback;
+    const jd: any = job.job_data ?? {};
+    const taskName: string =
+      (jd.task_name && String(jd.task_name).trim()) ||
+      (jd.template_name && String(jd.template_name).trim()) ||
+      '';
+    const list = Array.isArray(allTemplates)
+      ? allTemplates
+      : ((allTemplates as any)?.data ?? []);
+    let taskId: string | null = null;
+    const directId = jd.task_id ? String(jd.task_id) : '';
+    if (directId && (list as any[]).some((t) => String(t.id) === directId)) {
+      taskId = directId;
+    } else if (taskName) {
+      const match = (list as any[]).find(
+        (t) =>
+          String(t?.name ?? '').trim() === taskName &&
+          t.experiment_id === experimentInfo?.id,
+      );
+      if (match) taskId = String(match.id);
+    }
+    if (!taskId) return fallback;
+    const label = taskName || 'task';
+    return {
+      backHref: `/experiment/${experimentName}/tasks/${taskId}/runs`,
+      backLabel: `Back to ${label} runs`,
+    };
+  }, [job, allTemplates, experimentInfo?.id, experimentName]);
+
   const effectiveSection: SectionKey =
     activeSection ?? (job ? getDefaultSection(job.status ?? '') : 'overview');
 
@@ -130,11 +168,11 @@ export default function JobDetailPage() {
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Tooltip title={`Back to ${experimentName} tasks`}>
+          <Tooltip title={backLabel}>
             <IconButton
               size="sm"
               variant="plain"
-              onClick={() => navigate(`/experiment/${experimentName}/tasks`)}
+              onClick={() => navigate(backHref)}
             >
               <ArrowLeftIcon size={16} />
             </IconButton>
