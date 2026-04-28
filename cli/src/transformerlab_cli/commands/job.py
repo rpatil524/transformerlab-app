@@ -55,10 +55,7 @@ def _stop_provider_cluster(experiment_id: str, job_id: str) -> None:
     if not provider_id or not cluster_name:
         return
 
-    cluster_stop_url = (
-        f"/compute_provider/providers/{provider_id}/clusters/{cluster_name}/stop"
-        f"?job_id={job_id}"
-    )
+    cluster_stop_url = f"/compute_provider/providers/{provider_id}/clusters/{cluster_name}/stop?job_id={job_id}"
     cluster_response = api.post(cluster_stop_url)
     if cluster_response.status_code >= 400:
         console.print(
