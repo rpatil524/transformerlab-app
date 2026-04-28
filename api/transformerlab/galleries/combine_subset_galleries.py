@@ -75,9 +75,7 @@ def _assert_interactive_schema(items: list[dict[str, Any]]) -> None:
         if not isinstance(entry_id, str) or not entry_id.strip():
             raise ValueError(f"Interactive entry at index {idx} missing required string field: id")
         if not isinstance(interactive_type, str) or not interactive_type.strip():
-            raise ValueError(
-                f"Interactive entry '{entry_id}' missing required string field: interactive_type"
-            )
+            raise ValueError(f"Interactive entry '{entry_id}' missing required string field: interactive_type")
 
 
 def build_galleries() -> dict[str, list[dict[str, Any]]]:
