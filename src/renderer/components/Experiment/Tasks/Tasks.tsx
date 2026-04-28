@@ -100,21 +100,6 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     id: string;
     name?: string;
   } | null>(null);
-  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(
-    new Set(),
-  );
-
-  const handleToggleTaskExpanded = useCallback((taskId: string) => {
-    setExpandedTaskIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
-      return next;
-    });
-  }, []);
   const [stopPendingByJobId, setStopPendingByJobId] = useState<
     Record<string, boolean>
   >({});
@@ -1382,71 +1367,6 @@ export default function Tasks({ subtype }: { subtype?: string }) {
           loading={templatesIsLoading}
           allJobs={filteredJobsForDisplay}
           allJobsLoading={jobsIsLoading}
-          expandedTaskIds={expandedTaskIds}
-          onToggleTaskExpanded={handleToggleTaskExpanded}
-          renderJobsForTask={(_, taskJobs) => (
-            <JobsList
-              jobs={taskJobs}
-              launchProgressByJobId={launchProgressByJobId}
-              onDeleteJob={handleDeleteJob}
-              onViewOutput={(jobId) => {
-                const jobIdStr =
-                  jobId === null || jobId === undefined ? '' : String(jobId);
-                if (!jobIdStr || jobIdStr === '-1' || jobIdStr === 'NaN')
-                  return;
-                setViewOutputFromJob(jobIdStr);
-              }}
-              onViewCheckpoints={(jobId) =>
-                setViewCheckpointsFromJob(
-                  jobId && jobId !== 'NaN' ? jobId : null,
-                )
-              }
-              onViewAllArtifacts={(jobId) =>
-                setViewAllArtifactsFromJob(
-                  jobId && jobId !== 'NaN' ? jobId : null,
-                )
-              }
-              onViewEvalImages={(jobId) =>
-                setViewEvalImagesFromJob(
-                  jobId && jobId !== 'NaN' ? jobId : null,
-                )
-              }
-              onViewEvalResults={(jobId) =>
-                setViewEvalResultsFromJob(
-                  jobId && jobId !== 'NaN' ? jobId : null,
-                )
-              }
-              onViewGeneratedDataset={(_jobId, datasetId) => {
-                setPreviewDatasetModal({ open: true, datasetId });
-              }}
-              onViewSweepOutput={(jobId) => {
-                setViewOutputFromSweepJob(true);
-                const jobIdStr =
-                  jobId === null || jobId === undefined ? '' : String(jobId);
-                if (!jobIdStr || jobIdStr === '-1' || jobIdStr === 'NaN')
-                  return;
-                setViewOutputFromJob(jobIdStr);
-              }}
-              onViewSweepResults={(jobId) => {
-                setViewSweepResultsFromJob(
-                  jobId && jobId !== 'NaN' ? jobId : null,
-                );
-              }}
-              onViewInteractive={(jobId) =>
-                setInteractiveJobForModal(
-                  jobId && jobId !== 'NaN' ? jobId : null,
-                )
-              }
-              onViewTrackio={(jobId) =>
-                setTrackioJobIdForModal(jobId && jobId !== 'NaN' ? jobId : null)
-              }
-              loading={false}
-              hideJobId={false}
-              showFilesButton={false}
-              forceArtifactsButtonVisible
-              onStopPendingChange={handleStopPendingChange}
-            />
-          )}
         />
       </Sheet>
       {/* <JobsPanel

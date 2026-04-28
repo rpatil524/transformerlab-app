@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Table,
   ButtonGroup,
@@ -10,19 +11,21 @@ import {
   Menu,
   MenuItem,
   Skeleton,
-  Chip,
   Box,
 } from '@mui/joy';
 import {
   PlayIcon,
   Trash2Icon,
   MoreVerticalIcon,
-  ChevronRightIcon,
-  ChevronDownIcon,
   ArrowUpIcon,
   ArrowDownIcon,
+  LinkIcon,
 } from 'lucide-react';
+import Tooltip from '@mui/joy/Tooltip';
+import { useExperimentInfo } from 'renderer/lib/ExperimentInfoContext';
 import SafeJSONParse from 'renderer/components/Shared/SafeJSONParse';
+import { jobBelongsToTask } from './taskJobMatching';
+import { generateTaskRunsPermalink } from '../Jobs/jobDetailUtils';
 
 type TaskRow = {
   id: string;
@@ -37,14 +40,6 @@ type TaskRow = {
   remote_task?: boolean;
 };
 
-function jobBelongsToTask(job: any, task: TaskRow): boolean {
-  const jd = job?.job_data ?? {};
-  const name = task.name?.trim() ?? '';
-  if (name && jd.task_name && jd.task_name === name) return true;
-  if (name && jd.template_name && jd.template_name === name) return true;
-  return false;
-}
-
 type TaskTemplateListProps = {
   tasksList: TaskRow[];
   onDeleteTask?: (taskId: string, taskName?: string) => void;
@@ -56,9 +51,6 @@ type TaskTemplateListProps = {
   interactTasks?: boolean;
   allJobs?: any[];
   allJobsLoading?: boolean;
-  expandedTaskIds?: Set<string>;
-  onToggleTaskExpanded?: (taskId: string) => void;
-  renderJobsForTask?: (taskId: string, jobs: any[]) => React.ReactNode;
 };
 
 function relativeTime(ts: string | undefined): string {
@@ -97,11 +89,10 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
   interactTasks = false,
   allJobs = [],
   allJobsLoading = false,
-  expandedTaskIds = new Set(),
-  onToggleTaskExpanded,
-  renderJobsForTask,
 }) => {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const { experimentInfo } = useExperimentInfo();
+  const experimentName = experimentInfo?.name || experimentInfo?.id || '';
 
   const lastRunByTaskName = useMemo(() => {
     const map: Record<string, string> = {};
@@ -199,31 +190,6 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
     return run.length > 50 ? `${run.substring(0, 50)}...` : run;
   };
 
-  const getProviderInfo = (task: TaskRow) => {
-    if (task.type !== 'REMOTE') {
-      return 'N/A';
-    }
-
-    // For templates, fields are stored directly (not nested in config)
-    const config =
-      (typeof task.config === 'string'
-        ? SafeJSONParse(task.config as string, {})
-        : (task.config as any)) || {};
-
-    // Check if config has nested structure (old task format) or is empty
-    const isTemplate =
-      !task.config ||
-      (typeof config === 'object' && Object.keys(config).length === 0) ||
-      (!config.run && !config.cluster_name);
-
-    // Use template field directly if it's a template, otherwise use config
-    const providerName = isTemplate
-      ? (task as any).provider_name
-      : config.provider_name;
-
-    return providerName || 'Not specified';
-  };
-
   if (loading) {
     return (
       <Table stickyHeader sx={{ tableLayout: 'fixed', width: '100%' }}>
@@ -283,10 +249,6 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
       sx={{
         tableLayout: 'fixed',
         width: '100%',
-        // Thicker top border when one collapsed task immediately follows another
-        '& tbody tr[data-task-row] + tr[data-task-row] > td': {
-          borderTopWidth: '2px',
-        },
       }}
     >
       <thead>
@@ -314,169 +276,153 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
       </thead>
       <tbody>
         {sortedTasks.map((row) => {
-          const isExpanded = expandedTaskIds.has(row.id);
           const taskJobs = allJobs.filter((job) => jobBelongsToTask(job, row));
+          const runsHref = experimentName
+            ? `/experiment/${experimentName}/tasks/${row.id}/runs`
+            : '';
           return (
-            <React.Fragment key={row.id}>
-              <tr data-task-row="">
-                <td>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    {onToggleTaskExpanded && (
-                      <IconButton
-                        size="sm"
-                        variant="plain"
-                        color="neutral"
-                        onClick={() => onToggleTaskExpanded(row.id)}
-                        sx={{ minWidth: 0, p: 0.25 }}
-                      >
-                        {isExpanded ? (
-                          <ChevronDownIcon size={14} />
-                        ) : (
-                          <ChevronRightIcon size={14} />
-                        )}
-                      </IconButton>
-                    )}
-                    <Typography level="title-sm" sx={{ overflow: 'clip' }}>
-                      {getTitle(row)}
-                    </Typography>
-                  </Box>
-                </td>
-                <td style={{ textAlign: 'center' }}>
-                  <Typography level="body-sm" sx={{ color: 'text.secondary' }}>
-                    {allJobsLoading ? (
-                      <Skeleton
-                        variant="text"
-                        level="body-sm"
-                        width={16}
-                        sx={{ display: 'inline-block' }}
-                      />
-                    ) : taskJobs.length > 0 ? (
-                      taskJobs.length
-                    ) : (
-                      '—'
-                    )}
-                  </Typography>
-                </td>
-                <td>
-                  <Typography level="body-sm" sx={{ color: 'text.secondary' }}>
-                    {allJobsLoading ? (
-                      <Skeleton
-                        variant="text"
-                        level="body-sm"
-                        width={40}
-                        sx={{ display: 'inline-block' }}
-                      />
-                    ) : (
-                      relativeTime(lastRunByTaskName[row.name?.trim() ?? ''])
-                    )}
-                  </Typography>
-                </td>
-                {interactTasks && (
-                  <td style={{ overflow: 'clip' }}>
-                    <Typography level="body-sm">{row.provider_name}</Typography>
-                  </td>
-                )}
-                <td style={{ overflow: 'clip' }}>
-                  <Typography level="body-sm">{getCommandInfo(row)}</Typography>
-                </td>
-                <td style={{ overflow: 'hidden' }}>
-                  <Typography level="body-sm">
-                    {getResourcesInfo(row)}
-                  </Typography>
-                </td>
-                <td
-                  style={{
-                    overflow: 'visible',
-                  }}
-                >
-                  <ButtonGroup sx={{ justifyContent: 'flex-end' }}>
-                    <Button
-                      startDecorator={<PlayIcon />}
-                      variant="soft"
-                      color="success"
-                      onClick={() => onQueueTask?.(row)}
-                    >
-                      Queue
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      onClick={() => onEditTask?.(row)}
-                    >
-                      Edit
-                    </Button>
-                    <IconButton
-                      variant="plain"
-                      color="danger"
-                      onClick={() => onDeleteTask?.(row.id, getTitle(row))}
-                      title="Delete task"
-                    >
-                      <Trash2Icon style={{ cursor: 'pointer' }} />
-                    </IconButton>
-                    {(onExportTask || onViewFilesTask) && (
-                      <Dropdown>
-                        <MenuButton
-                          slots={{ root: IconButton }}
-                          slotProps={{
-                            root: { variant: 'plain', color: 'neutral' },
-                          }}
-                          sx={{ minWidth: 0 }}
-                        >
-                          <MoreVerticalIcon size={16} />
-                        </MenuButton>
-                        <Menu>
-                          {onViewFilesTask && (
-                            <MenuItem onClick={() => onViewFilesTask?.(row)}>
-                              View Files
-                            </MenuItem>
-                          )}
-                          {onExportTask && (
-                            <MenuItem onClick={() => onExportTask?.(row.id)}>
-                              Export to Team Gallery
-                            </MenuItem>
-                          )}
-                        </Menu>
-                      </Dropdown>
-                    )}
-                  </ButtonGroup>
-                </td>
-              </tr>
-              {isExpanded && renderJobsForTask && (
-                <tr>
-                  <td
-                    colSpan={99}
-                    style={{ padding: 0, border: 'none', width: '100%' }}
+            <tr key={row.id}>
+              <td>
+                {runsHref ? (
+                  <RouterLink
+                    to={runsHref}
+                    style={{ textDecoration: 'none', color: 'inherit' }}
                   >
-                    <Box
+                    <Typography
+                      level="title-sm"
                       sx={{
-                        display: 'block',
-                        width: '100%',
-                        pl: 4,
-                        pr: 1,
-                        py: 1,
-                        bgcolor: 'background.level1',
-                        borderBottom: '2px solid',
-                        borderColor: 'neutral.300',
-                        '& table': {
-                          tableLayout: 'auto',
-                          width: '100%',
-                        },
+                        overflow: 'clip',
+                        cursor: 'pointer',
+                        '&:hover': { textDecoration: 'underline' },
                       }}
                     >
-                      {taskJobs.length === 0 ? (
-                        <Typography
-                          level="body-sm"
-                          sx={{ color: 'text.tertiary', py: 1 }}
-                        >
-                          No runs yet
-                        </Typography>
-                      ) : (
-                        renderJobsForTask(row.id, taskJobs)
-                      )}
-                    </Box>
-                  </td>
-                </tr>
+                      {getTitle(row)}
+                    </Typography>
+                  </RouterLink>
+                ) : (
+                  <Typography level="title-sm" sx={{ overflow: 'clip' }}>
+                    {getTitle(row)}
+                  </Typography>
+                )}
+              </td>
+              <td style={{ textAlign: 'center' }}>
+                <Typography level="body-sm" sx={{ color: 'text.secondary' }}>
+                  {allJobsLoading ? (
+                    <Skeleton
+                      variant="text"
+                      level="body-sm"
+                      width={16}
+                      sx={{ display: 'inline-block' }}
+                    />
+                  ) : taskJobs.length > 0 ? (
+                    taskJobs.length
+                  ) : (
+                    '—'
+                  )}
+                </Typography>
+              </td>
+              <td>
+                <Typography level="body-sm" sx={{ color: 'text.secondary' }}>
+                  {allJobsLoading ? (
+                    <Skeleton
+                      variant="text"
+                      level="body-sm"
+                      width={40}
+                      sx={{ display: 'inline-block' }}
+                    />
+                  ) : (
+                    relativeTime(lastRunByTaskName[row.name?.trim() ?? ''])
+                  )}
+                </Typography>
+              </td>
+              {interactTasks && (
+                <td style={{ overflow: 'clip' }}>
+                  <Typography level="body-sm">{row.provider_name}</Typography>
+                </td>
               )}
-            </React.Fragment>
+              <td style={{ overflow: 'clip' }}>
+                <Typography level="body-sm">{getCommandInfo(row)}</Typography>
+              </td>
+              <td style={{ overflow: 'hidden' }}>
+                <Typography level="body-sm">{getResourcesInfo(row)}</Typography>
+              </td>
+              <td
+                style={{
+                  overflow: 'visible',
+                }}
+              >
+                <ButtonGroup sx={{ justifyContent: 'flex-end' }}>
+                  <Button
+                    startDecorator={<PlayIcon />}
+                    variant="soft"
+                    color="success"
+                    onClick={() => onQueueTask?.(row)}
+                  >
+                    Queue
+                  </Button>
+                  <Button variant="outlined" onClick={() => onEditTask?.(row)}>
+                    Edit
+                  </Button>
+                  {runsHref && (
+                    <Tooltip title="Copy permalink to runs">
+                      <IconButton
+                        variant="plain"
+                        color="neutral"
+                        onClick={() => {
+                          navigator.clipboard
+                            .writeText(
+                              window.location.href.split('#')[0] +
+                                generateTaskRunsPermalink(
+                                  experimentName,
+                                  row.id,
+                                ),
+                            )
+                            // eslint-disable-next-line no-console
+                            .catch((err) =>
+                              console.error('Failed to copy permalink:', err),
+                            );
+                        }}
+                      >
+                        <LinkIcon size={16} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  <IconButton
+                    variant="plain"
+                    color="danger"
+                    onClick={() => onDeleteTask?.(row.id, getTitle(row))}
+                    title="Delete task"
+                  >
+                    <Trash2Icon style={{ cursor: 'pointer' }} />
+                  </IconButton>
+                  {(onExportTask || onViewFilesTask) && (
+                    <Dropdown>
+                      <MenuButton
+                        slots={{ root: IconButton }}
+                        slotProps={{
+                          root: { variant: 'plain', color: 'neutral' },
+                        }}
+                        sx={{ minWidth: 0 }}
+                      >
+                        <MoreVerticalIcon size={16} />
+                      </MenuButton>
+                      <Menu>
+                        {onViewFilesTask && (
+                          <MenuItem onClick={() => onViewFilesTask?.(row)}>
+                            View Files
+                          </MenuItem>
+                        )}
+                        {onExportTask && (
+                          <MenuItem onClick={() => onExportTask?.(row.id)}>
+                            Export to Team Gallery
+                          </MenuItem>
+                        )}
+                      </Menu>
+                    </Dropdown>
+                  )}
+                </ButtonGroup>
+              </td>
+            </tr>
           );
         })}
       </tbody>
