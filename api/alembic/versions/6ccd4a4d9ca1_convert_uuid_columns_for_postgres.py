@@ -10,7 +10,7 @@ converts those columns to the native UUID type on PostgreSQL. It is a no-op
 for SQLite, which has no native UUID type.
 
 Revision ID: 6ccd4a4d9ca1
-Revises: b5c6d7e8f9a0
+Revises: d2e3f4a5b6c7
 Create Date: 2026-02-28 00:00:00.000000
 
 """
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "6ccd4a4d9ca1"
-down_revision: Union[str, Sequence[str], None] = "b5c6d7e8f9a0"
+down_revision: Union[str, Sequence[str], None] = "d2e3f4a5b6c7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
