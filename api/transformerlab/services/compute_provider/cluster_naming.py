@@ -3,11 +3,11 @@
 from typing import Optional
 
 
-# Cap cluster names to 41 characters to stay withing the limit of
+# Cap cluster names to 40 characters to stay withing the limit of
 # the strictest provider (dstack).
-# This means capping the basename portion to 28 characters (use 25 to be safe)
+# This means capping the basename portion to 31 characters (use 30 to be safe)
 # to leave room for a ``-<short_id>`` suffix.
-_MAX_BASENAME_LENGTH = 25
+_MAX_BASENAME_LENGTH = 30
 
 
 def sanitize_cluster_basename(base_name: Optional[str]) -> str:
@@ -18,7 +18,7 @@ def sanitize_cluster_basename(base_name: Optional[str]) -> str:
      - lowercased
      - underscores are replaced with hyphens
      - name is guaranteed to start with a letter
-     - no longer than 41 characters
+     - no longer than 40 characters
     """
     if not base_name:
         return "remote-template"
