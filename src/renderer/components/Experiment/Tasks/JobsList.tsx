@@ -68,6 +68,7 @@ interface JobsListProps {
   showFilesButton?: boolean;
   forceArtifactsButtonVisible?: boolean;
   onStopPendingChange?: (jobId: string, stopPending: boolean) => void;
+  consolidatedActions?: boolean;
 }
 
 const JobsList: React.FC<JobsListProps> = ({
@@ -97,6 +98,7 @@ const JobsList: React.FC<JobsListProps> = ({
   showFilesButton = true,
   forceArtifactsButtonVisible = false,
   onStopPendingChange,
+  consolidatedActions = false,
 }) => {
   const { experimentInfo } = useExperimentInfo();
 
@@ -392,7 +394,18 @@ const JobsList: React.FC<JobsListProps> = ({
                           Trackio
                         </Button>
                       )}
-                    {!hideOutputButton && (
+                    {consolidatedActions && !job?.placeholder && (
+                      <Button
+                        size="sm"
+                        variant="plain"
+                        onClick={() => onViewOutput?.(job?.id)}
+                        disabled={stopPending}
+                        startDecorator={<LogsIcon />}
+                      >
+                        Logs
+                      </Button>
+                    )}
+                    {!consolidatedActions && !hideOutputButton && (
                       <Button
                         size="sm"
                         variant="plain"
@@ -403,7 +416,7 @@ const JobsList: React.FC<JobsListProps> = ({
                         Output
                       </Button>
                     )}
-                    {job?.job_data?.eval_images_dir && (
+                    {!consolidatedActions && job?.job_data?.eval_images_dir && (
                       <Button
                         size="sm"
                         variant="plain"
@@ -413,7 +426,8 @@ const JobsList: React.FC<JobsListProps> = ({
                         View Eval Images
                       </Button>
                     )}
-                    {job?.job_data?.eval_results &&
+                    {!consolidatedActions &&
+                      job?.job_data?.eval_results &&
                       Array.isArray(job.job_data.eval_results) &&
                       job.job_data.eval_results.length > 0 && (
                         <Button
@@ -426,12 +440,13 @@ const JobsList: React.FC<JobsListProps> = ({
                           Eval Results
                         </Button>
                       )}
-                    {(forceArtifactsButtonVisible ||
-                      job?.job_data?.artifacts ||
-                      job?.job_data?.artifacts_dir ||
-                      job?.job_data?.generated_datasets ||
-                      job?.job_data?.models ||
-                      job?.job_data?.has_profiling) &&
+                    {!consolidatedActions &&
+                      (forceArtifactsButtonVisible ||
+                        job?.job_data?.artifacts ||
+                        job?.job_data?.artifacts_dir ||
+                        job?.job_data?.generated_datasets ||
+                        job?.job_data?.models ||
+                        job?.job_data?.has_profiling) &&
                       !job?.placeholder && (
                         <Button
                           size="sm"
@@ -443,7 +458,8 @@ const JobsList: React.FC<JobsListProps> = ({
                           Artifacts
                         </Button>
                       )}
-                    {(job?.type === 'SWEEP' || job?.job_data?.sweep_parent) &&
+                    {!consolidatedActions &&
+                      (job?.type === 'SWEEP' || job?.job_data?.sweep_parent) &&
                       job?.status === 'COMPLETE' && (
                         <Button
                           size="sm"
@@ -455,17 +471,19 @@ const JobsList: React.FC<JobsListProps> = ({
                           Sweep Results
                         </Button>
                       )}
-                    {job?.job_data?.sweep_output_file && (
-                      <Button
-                        size="sm"
-                        variant="plain"
-                        onClick={() => onViewSweepOutput?.(job?.id)}
-                        disabled={stopPending}
-                      >
-                        Sweep Output
-                      </Button>
-                    )}
-                    {job?.status === 'INTERACTIVE' &&
+                    {!consolidatedActions &&
+                      job?.job_data?.sweep_output_file && (
+                        <Button
+                          size="sm"
+                          variant="plain"
+                          onClick={() => onViewSweepOutput?.(job?.id)}
+                          disabled={stopPending}
+                        >
+                          Sweep Output
+                        </Button>
+                      )}
+                    {!consolidatedActions &&
+                      job?.status === 'INTERACTIVE' &&
                       job?.job_data?.subtype === 'interactive' && (
                         <>
                           <Button
@@ -489,7 +507,7 @@ const JobsList: React.FC<JobsListProps> = ({
                           )}
                         </>
                       )}
-                    {job?.job_data?.checkpoints && (
+                    {!consolidatedActions && job?.job_data?.checkpoints && (
                       <Button
                         size="sm"
                         variant="plain"
@@ -500,17 +518,19 @@ const JobsList: React.FC<JobsListProps> = ({
                         Checkpoints
                       </Button>
                     )}
-                    {showFilesButton && !job?.placeholder && (
-                      <Button
-                        size="sm"
-                        variant="plain"
-                        onClick={() => onViewFileBrowser?.(job?.id)}
-                        disabled={stopPending}
-                        startDecorator={<FolderOpenIcon />}
-                      >
-                        Files
-                      </Button>
-                    )}
+                    {!consolidatedActions &&
+                      showFilesButton &&
+                      !job?.placeholder && (
+                        <Button
+                          size="sm"
+                          variant="plain"
+                          onClick={() => onViewFileBrowser?.(job?.id)}
+                          disabled={stopPending}
+                          startDecorator={<FolderOpenIcon />}
+                        >
+                          Files
+                        </Button>
+                      )}
                     {!job?.placeholder && (
                       <Tooltip title="Copy permalink" variant="outlined">
                         <IconButton

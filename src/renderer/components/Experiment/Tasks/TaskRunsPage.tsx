@@ -351,6 +351,7 @@ export default function TaskRunsPage() {
               hideJobId={false}
               showFilesButton={false}
               forceArtifactsButtonVisible
+              consolidatedActions
             />
           )}
         </Box>
