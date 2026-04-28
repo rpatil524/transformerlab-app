@@ -116,9 +116,9 @@ async def create_personal_team(session: AsyncSession, user) -> Team:
     remote_storage_enabled = getenv("TFL_REMOTE_STORAGE_ENABLED", "false").lower() == "true"
     if remote_storage_enabled or (getenv("TFL_STORAGE_PROVIDER") == "localfs" and getenv("TFL_STORAGE_URI")):
         try:
-            from transformerlab.shared.remote_workspace import DEFAULT_AWS_PROFILE
+            from transformerlab.shared.remote_workspace import get_default_aws_profile
 
-            await asyncio.to_thread(create_bucket_for_team, team.id, DEFAULT_AWS_PROFILE)
+            await asyncio.to_thread(create_bucket_for_team, team.id, get_default_aws_profile())
         except Exception as e:
             # Log error but don't fail team creation if storage creation fails
             print(f"Warning: Failed to create storage for team {team.id}: {e}")
