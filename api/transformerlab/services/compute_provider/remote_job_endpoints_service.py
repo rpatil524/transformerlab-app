@@ -180,7 +180,7 @@ async def resume_remote_job_from_checkpoint(
 
     base_name = job_data.get("task_name") or provider.name
     new_job_short_id = job_service.get_short_job_id(new_job_id)
-    formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-job-{new_job_short_id}"
+    formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-{new_job_short_id}"
 
     user = user_and_team.get("user")
     user_info: Dict[str, Any] = {}
