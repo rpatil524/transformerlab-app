@@ -57,9 +57,7 @@ class DeleteTeamTaskFromGalleryRequest(BaseModel):
 
 
 class TaskYamlResources(BaseModel):
-    # Allow extra fields so SkyPilot passthrough options (cloud, region, zone,
-    # use_spot, any_of, etc.) are not rejected during validation.
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     compute_provider: Optional[str] = None
     cpus: Optional[Any] = None
@@ -67,7 +65,15 @@ class TaskYamlResources(BaseModel):
     disk_space: Optional[Any] = None
     accelerators: Optional[str] = None
     num_nodes: Optional[int] = None
+    # dstack-specific resource options
     fleet_name: Optional[str] = None
+    # SkyPilot-compatible resource options
+    instance_type: Optional[str] = None
+    cloud: Optional[str] = None
+    region: Optional[str] = None
+    zone: Optional[str] = None
+    use_spot: Optional[bool] = None
+    image_id: Optional[str] = None
 
 
 class TaskYamlSweeps(BaseModel):
