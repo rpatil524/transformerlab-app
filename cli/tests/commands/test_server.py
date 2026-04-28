@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 from transformerlab_cli.main import app
-from transformerlab_cli.commands.server import _build_env_content, _check_aws_profile, _generate_secret, _load_existing_env
+from transformerlab_cli.commands.server import (
+    _build_env_content,
+    _check_aws_profile,
+    _generate_secret,
+    _load_existing_env,
+)
 from tests.helpers import strip_ansi
 
 runner = CliRunner()
