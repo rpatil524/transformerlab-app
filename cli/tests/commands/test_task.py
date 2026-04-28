@@ -109,9 +109,7 @@ def test_task_queue_sends_description(_mock_exp, _mock_get, _mock_providers, moc
 @patch("transformerlab_cli.commands.task.require_current_experiment", return_value="exp1")
 def test_task_add_from_git_no_interactive_skips_prompt_and_retries_create_if_missing(_mock_exp, mock_post):
     """`lab task add --from-git ... --no-interactive` should avoid prompts and retry with default task.yaml."""
-    result = runner.invoke(
-        app, ["task", "add", "--from-git", "https://github.com/example/repo", "--no-interactive"]
-    )
+    result = runner.invoke(app, ["task", "add", "--from-git", "https://github.com/example/repo", "--no-interactive"])
     assert result.exit_code == 0, result.output
     assert mock_post.call_count == 2
     retry_payload = mock_post.call_args.kwargs["json_data"]
