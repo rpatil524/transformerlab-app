@@ -114,7 +114,11 @@ Endpoints.ComputeProvider = {
   },
   GetSweepResults: (jobId: string) =>
     `${API_URL()}compute_provider/sweep/${jobId}/results`,
-  StopCluster: (providerId: string, clusterName: string, jobId?: string | number) => {
+  StopCluster: (
+    providerId: string,
+    clusterName: string,
+    jobId?: string | number,
+  ) => {
     const base = `${API_URL()}compute_provider/providers/${providerId}/clusters/${clusterName}/stop`;
     if (jobId === undefined || jobId === null) {
       return base;
