@@ -14,6 +14,9 @@ import sys
 
 from lab.storage import STORAGE_PROVIDER
 
+# Default AWS profile name. Override via the AWS_PROFILE environment variable.
+DEFAULT_AWS_PROFILE = os.getenv("AWS_PROFILE", "transformerlab-s3")
+
 
 def validate_cloud_credentials() -> None:
     """
@@ -51,7 +54,7 @@ def _validate_aws_credentials() -> None:
     Raises:
         SystemExit: If AWS profile is not found or credentials are missing
     """
-    profile_name = os.getenv("AWS_PROFILE", "transformerlab-s3")
+    profile_name = DEFAULT_AWS_PROFILE
 
     import boto3
     from botocore.exceptions import ProfileNotFound, NoCredentialsError

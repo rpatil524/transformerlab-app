@@ -14,6 +14,10 @@ RUNPOD_AWS_CREDENTIALS_DIR = "/workspace/.aws"
 
 def get_aws_credentials_from_file(profile_name: str = "transformerlab-s3") -> Tuple[Optional[str], Optional[str]]:
     """Read AWS credentials from ~/.aws/credentials for the specified profile."""
+    from transformerlab.shared.remote_workspace import DEFAULT_AWS_PROFILE
+
+    if profile_name == "transformerlab-s3":
+        profile_name = DEFAULT_AWS_PROFILE
     credentials_path = os.path.join(os.path.expanduser("~"), ".aws", "credentials")
 
     if not os.path.exists(credentials_path):
@@ -39,7 +43,9 @@ def generate_aws_credentials_setup(
     aws_profile: Optional[str] = None,
     aws_credentials_dir: Optional[str] = None,
 ) -> str:
-    profile_name = aws_profile or os.getenv("AWS_PROFILE", "transformerlab-s3")
+    from transformerlab.shared.remote_workspace import DEFAULT_AWS_PROFILE
+
+    profile_name = aws_profile or DEFAULT_AWS_PROFILE
     cred_dir = aws_credentials_dir if aws_credentials_dir else "~/.aws"
     cred_file = f"{cred_dir}/credentials" if aws_credentials_dir else "~/.aws/credentials"
 
