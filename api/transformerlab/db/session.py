@@ -16,18 +16,17 @@ from lab.dirs import get_workspace_dir
 # It is created once and can be imported elsewhere.
 # Use NullPool for SQLite (pooling provides no benefit since SQLite serializes writes).
 # Use higher pool limits for Postgres to handle concurrent connections.
-# Force NullPool when TFL_DB_FORCE_NULL_POOL=1 (used by the test suite): pytest-asyncio
-# creates a fresh event loop per module, and pooled asyncpg connections bound to a
-# previous loop become invalid (raising "Future attached to a different loop" or
-# "another operation is in progress"). NullPool sidesteps this by opening a new
-# connection per checkout. Production (single long-lived uvicorn loop) keeps the
-# sized pool for connection reuse.
+# Auto-detect pytest and force NullPool there: pytest-asyncio creates a fresh event
+# loop per module, and pooled asyncpg connections bound to a previous loop become
+# invalid (raising "Future attached to a different loop" or "another operation is
+# in progress"). NullPool sidesteps this by opening a new connection per checkout.
+# Production (single long-lived uvicorn loop) keeps the sized pool for connection reuse.
 _pg_pool_size = int(os.getenv("TFL_DB_POOL_SIZE", "20"))
 _pg_max_overflow = int(os.getenv("TFL_DB_MAX_OVERFLOW", "40"))
 _pg_pool_timeout = int(os.getenv("TFL_DB_POOL_TIMEOUT", "60"))
-_force_null_pool = os.getenv("TFL_DB_FORCE_NULL_POOL") == "1"
+_under_pytest = "pytest" in sys.modules
 
-if DATABASE_URL.startswith("sqlite") or _force_null_pool:
+if DATABASE_URL.startswith("sqlite") or _under_pytest:
     async_engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
 else:
     async_engine = create_async_engine(
