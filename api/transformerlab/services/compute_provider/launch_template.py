@@ -199,7 +199,7 @@ async def launch_template_on_provider(
 
     base_name = request.cluster_name or request.task_name or provider.name
     job_short_id = job_service.get_short_job_id(job_id)
-    formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-{job_short_id}"
+    formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-job-{job_short_id}"
 
     user_info = {}
     if getattr(user, "first_name", None) or getattr(user, "last_name", None):

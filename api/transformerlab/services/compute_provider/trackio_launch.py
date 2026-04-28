@@ -12,7 +12,7 @@ def resolve_trackio_project_name(experiment_id: str | int, requested_project_nam
 
 
 def build_trackio_run_name(task_name: str | None, job_short_id: str) -> str:
-    return f"{task_name or 'task'}-{job_short_id}"
+    return f"{task_name or 'task'}-job-{job_short_id}"
 
 
 async def apply_trackio_launch_env(
