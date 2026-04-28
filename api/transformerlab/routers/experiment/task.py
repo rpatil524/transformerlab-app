@@ -684,15 +684,15 @@ async def _resolve_provider(
                     matched_provider = provider
                     break
 
-        # Use matched provider if found, otherwise use first available as fallback
+        # Use matched provider if found, otherwise prefer the team's default
+        # provider (is_default=True), falling back to the first available.
         if matched_provider:
             task_data["provider_id"] = str(matched_provider.id)
             task_data["provider_name"] = matched_provider.name
         else:
-            # No provider specified or no match found, use first available
-            first_provider = providers[0]
-            task_data["provider_id"] = str(first_provider.id)
-            task_data["provider_name"] = first_provider.name
+            chosen_provider = next((p for p in providers if getattr(p, "is_default", False)), providers[0])
+            task_data["provider_id"] = str(chosen_provider.id)
+            task_data["provider_name"] = chosen_provider.name
     except Exception:
         # If provider resolution fails, continue without it
         # The task can still be created, provider selection can happen later
@@ -1033,7 +1033,7 @@ async def import_task_from_gallery(
         # Create interactive task template (store interactive_gallery_id for launch-time run resolution)
         requested_name = (request.name or "").strip()
         task_name = requested_name or gallery_entry.get("name", "Interactive Task")
-        interactive_type = gallery_entry.get("interactive_type") or "custom"
+        interactive_type = gallery_entry.get("interactive_type") or gallery_entry.get("id") or "custom"
         interactive_gallery_id = gallery_entry.get("id")
 
         # Resolve task setup/command from the gallery entry's source:
@@ -1477,11 +1477,14 @@ async def import_task_from_team_gallery(
         or gallery_entry.get("interactive_gallery_id")
     )
 
-    interactive_type = gallery_entry.get("interactive_type") or (
-        inline_config.get("interactive_type") if inline_config else None
-    )
     interactive_gallery_id = gallery_entry.get("interactive_gallery_id") or (
         inline_config.get("interactive_gallery_id") if inline_config else None
+    )
+    interactive_type = (
+        gallery_entry.get("interactive_type")
+        or (inline_config.get("interactive_type") if inline_config else None)
+        or gallery_entry.get("id")
+        or interactive_gallery_id
     )
 
     # --- 1) Filesystem-backed entry: read task.yaml and copy whole directory ---

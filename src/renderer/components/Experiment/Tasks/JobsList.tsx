@@ -104,6 +104,21 @@ const JobsList: React.FC<JobsListProps> = ({
     return String(status || '') === 'RUNNING' || isTerminalJobStatus(status);
   };
 
+  const formatInteractiveTypeLabel = (type: string): string => {
+    const labels: Record<string, string> = {
+      vscode: 'VS Code',
+      jupyter: 'Jupyter',
+      vllm: 'vLLM',
+      ollama: 'Ollama',
+      ssh: 'SSH',
+      gradio: 'Gradio',
+      custom: 'Custom',
+    };
+    const key = type.toLowerCase();
+    if (labels[key]) return labels[key];
+    return type.charAt(0).toUpperCase() + type.slice(1);
+  };
+
   const formatJobConfig = (job: any) => {
     const jobData = job?.job_data || {};
     const interactiveType =
@@ -167,6 +182,40 @@ const JobsList: React.FC<JobsListProps> = ({
         </>
       );
     }
+    // Interactive jobs: show job type, submitter, provider, and title
+    if (showInteractiveType && interactiveType) {
+      const taskName = jobData?.task_name || '';
+      const typeLabel = formatInteractiveTypeLabel(String(interactiveType));
+      return (
+        <>
+          <Typography level="title-sm" fontWeight="bold">
+            {typeLabel}
+            {job?.job_data?.favorite && (
+              <>
+                {' '}
+                <BookmarkIcon size={16} fill="currentColor" />
+              </>
+            )}
+          </Typography>
+          {userDisplay && (
+            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
+              <b>Submitter:</b> {userDisplay}
+            </Typography>
+          )}
+          {providerDisplay && (
+            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
+              <b>Provider:</b> {providerDisplay}
+            </Typography>
+          )}
+          {taskName && (
+            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
+              <b>Title:</b> {taskName}
+            </Typography>
+          )}
+        </>
+      );
+    }
+
     // Build preferred details
     if (clusterName || userDisplay || providerDisplay) {
       return (
@@ -188,11 +237,6 @@ const JobsList: React.FC<JobsListProps> = ({
           {providerDisplay && (
             <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
               <b>Provider:</b> {providerDisplay}
-            </Typography>
-          )}
-          {showInteractiveType && interactiveType && (
-            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
-              <b>Interactive Type:</b> {String(interactiveType)}
             </Typography>
           )}
         </>

@@ -314,7 +314,7 @@ def test_cli_task_routes_live_server(live_context: dict[str, str]) -> None:
 def test_cli_job_and_artifact_routes_live_server(live_context: dict[str, str]) -> None:
     headers = live_context["headers"]
     experiment_id = live_context["experiment_id"]
-    fake_job_id = "route-smoke-job-id"
+    fake_job_id = "route-smoke-id"
 
     with httpx.Client(timeout=30.0) as client:
         _assert_status_in(

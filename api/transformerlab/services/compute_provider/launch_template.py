@@ -199,7 +199,7 @@ async def launch_template_on_provider(
 
     base_name = request.cluster_name or request.task_name or provider.name
     job_short_id = job_service.get_short_job_id(job_id)
-    formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-job-{job_short_id}"
+    formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-{job_short_id}"
 
     user_info = {}
     if getattr(user, "first_name", None) or getattr(user, "last_name", None):
@@ -223,8 +223,10 @@ async def launch_template_on_provider(
 
     if os.getenv("TFL_REMOTE_STORAGE_ENABLED", "false").lower() == "true":
         if STORAGE_PROVIDER == "aws":
-            # Get AWS credentials from stored credentials file (transformerlab-s3 profile)
-            aws_profile = "transformerlab-s3"
+            # Get AWS credentials from stored credentials file
+            from transformerlab.shared.remote_workspace import get_default_aws_profile
+
+            aws_profile = get_default_aws_profile()
             aws_access_key_id, aws_secret_access_key = await asyncio.to_thread(
                 get_aws_credentials_from_file, aws_profile
             )
