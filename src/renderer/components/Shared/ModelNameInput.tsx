@@ -14,20 +14,12 @@ import { XIcon } from 'lucide-react';
 const MAX_HISTORY_SIZE = 10;
 const STORAGE_KEY_PREFIX = 'tlab:modelHistory:';
 
-/** Map interactive_type values to stable storage-key suffixes. */
-const TASK_TYPE_KEY_MAP: Record<string, string> = {
-  vllm: 'vllm',
-  ollama: 'ollama',
-  mlx: 'mlx',
-};
-
 /** Derive the localStorage key for a given interactive_type. */
 export function getModelHistoryKey(
   taskTypeOrId: string | undefined | null,
 ): string {
   if (!taskTypeOrId) return `${STORAGE_KEY_PREFIX}default`;
-  const mapped = TASK_TYPE_KEY_MAP[taskTypeOrId];
-  return `${STORAGE_KEY_PREFIX}${mapped ?? taskTypeOrId}`;
+  return `${STORAGE_KEY_PREFIX}${taskTypeOrId}`;
 }
 
 // ---------------------------------------------------------------------------
