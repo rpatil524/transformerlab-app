@@ -102,7 +102,10 @@ def test_task_queue_sends_description(_mock_exp, _mock_get, _mock_providers, moc
 
 @patch("transformerlab_cli.commands.task.api.post_text", return_value=_mock_resp({"valid": True}))
 @patch("transformerlab_cli.commands.task.api.put", return_value=_mock_resp({"message": "OK"}))
-@patch("transformerlab_cli.commands.task.api.get", return_value=MagicMock(status_code=200, text="name: demo\nrun: echo hi\n"))
+@patch(
+    "transformerlab_cli.commands.task.api.get",
+    return_value=MagicMock(status_code=200, text="name: demo\nrun: echo hi\n"),
+)
 @patch("transformerlab_cli.commands.task.require_current_experiment", return_value="exp1")
 def test_task_edit_updates_yaml_from_file(_mock_exp, _mock_get, mock_put, _mock_post_text):
     """`lab task edit --from-file` validates YAML and updates task.yaml."""

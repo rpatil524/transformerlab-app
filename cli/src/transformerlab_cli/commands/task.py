@@ -277,7 +277,9 @@ def _upload_path_to_server(path_to_upload: str) -> str:
 
         upload_id = init_resp.json()["upload_id"]
         status_resp = api.get(f"/upload/{upload_id}/status")
-        already_received: set[int] = set(status_resp.json().get("received", []) if status_resp.status_code == 200 else [])
+        already_received: set[int] = set(
+            status_resp.json().get("received", []) if status_resp.status_code == 200 else []
+        )
 
         with open(tmp_zip_path, "rb") as zip_fh:
             with Progress(
