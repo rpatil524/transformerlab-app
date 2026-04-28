@@ -761,7 +761,7 @@ class SLURMProvider(ComputeProvider):
         script_content += "#SBATCH --requeue\n"
 
         # Extract partition name from cluster_name or use provider config
-        # cluster_name might be a job identifier like "slurm-test-job-15"
+        # cluster_name might be a job identifier like "slurm-test-15"
         # Check if we have a partition specified in provider_config
         partition = job_config.provider_config.get("partition") if job_config.provider_config else None
 
