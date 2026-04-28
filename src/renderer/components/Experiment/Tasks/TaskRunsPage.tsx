@@ -313,7 +313,6 @@ export default function TaskRunsPage() {
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
                         flex: 1,
-                        fontWeight: isActive ? 'lg' : undefined,
                       }}
                     >
                       {label}
