@@ -593,12 +593,6 @@ multiuser_setup() {
   echo "Installing SkyPilot with Kubernetes support..."
   uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" "skypilot[kubernetes]==0.10.5"
 
-  echo "Installing paramiko for SLURM provider support..."
-  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" paramiko
-
-  echo "Installing Sentry SDK..."
-  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" sentry-sdk
-
   echo "Multiuser setup complete."
 
 }
