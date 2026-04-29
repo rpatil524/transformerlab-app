@@ -1173,7 +1173,11 @@ async def import_task_from_gallery(
                 await storage.copy_dir(local_task_dir, dest_subdir)
                 await task_service.update_task(task_id, {"file_mounts": True}, experiment_id=experimentId)
 
-            return {"status": "success", "message": f"Interactive task '{task_name}' imported successfully", "id": task_id}
+            return {
+                "status": "success",
+                "message": f"Interactive task '{task_name}' imported successfully",
+                "id": task_id,
+            }
 
         # Regular task import (existing logic)
         gallery = await galleries.get_tasks_gallery()
