@@ -94,17 +94,17 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
   const { experimentInfo } = useExperimentInfo();
   const experimentName = experimentInfo?.name || experimentInfo?.id || '';
 
-  const lastRunByTaskName = useMemo(() => {
+  const lastRunByTaskId = useMemo(() => {
     const map: Record<string, string> = {};
     for (const job of allJobs) {
       if (job?.placeholder) continue;
-      const jd = job?.job_data ?? {};
-      const taskName = (jd.task_name || jd.template_name || '').trim();
-      if (!taskName) continue;
+      const taskId = job?.job_data?.task_id;
+      if (taskId == null) continue;
+      const key = String(taskId);
       const ts: string = job.created_at || job.created || '';
       if (!ts) continue;
-      if (!map[taskName] || ts > map[taskName]) {
-        map[taskName] = ts;
+      if (!map[key] || ts > map[key]) {
+        map[key] = ts;
       }
     }
     return map;
@@ -112,8 +112,8 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
 
   const sortedTasks = useMemo(() => {
     return [...tasksList].sort((a, b) => {
-      const tsA = lastRunByTaskName[a.name?.trim() ?? ''] ?? '';
-      const tsB = lastRunByTaskName[b.name?.trim() ?? ''] ?? '';
+      const tsA = lastRunByTaskId[String(a.id)] ?? '';
+      const tsB = lastRunByTaskId[String(b.id)] ?? '';
       if (!tsA && !tsB) return 0;
       if (!tsA) return 1;
       if (!tsB) return -1;
@@ -121,7 +121,7 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
         ? tsB.localeCompare(tsA)
         : tsA.localeCompare(tsB);
     });
-  }, [tasksList, sortDir, lastRunByTaskName]);
+  }, [tasksList, sortDir, lastRunByTaskId]);
 
   const getResourcesInfo = (task: TaskRow) => {
     if (task.type !== 'REMOTE') {
@@ -331,7 +331,7 @@ const TaskTemplateList: React.FC<TaskTemplateListProps> = ({
                       sx={{ display: 'inline-block' }}
                     />
                   ) : (
-                    relativeTime(lastRunByTaskName[row.name?.trim() ?? ''])
+                    relativeTime(lastRunByTaskId[String(row.id)])
                   )}
                 </Typography>
               </td>
