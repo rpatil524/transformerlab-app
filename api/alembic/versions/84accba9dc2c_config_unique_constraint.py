@@ -25,34 +25,46 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Remove UNIQUE(key) constraint from config by recreating the table."""
     connection = op.get_bind()
+    dialect = connection.dialect.name
 
-    # SQLite: recreate table without UNIQUE("key"), preserving composite unique (user_id, team_id, key)
-    connection.execute(
-        sa.text("""
-            CREATE TABLE config_new (
-                id INTEGER NOT NULL,
-                "key" VARCHAR NOT NULL,
-                value VARCHAR,
-                user_id VARCHAR,
-                team_id VARCHAR,
-                PRIMARY KEY (id)
-            )
-        """)
-    )
-    connection.execute(
-        sa.text(
-            "INSERT INTO config_new (id, key, value, user_id, team_id) "
-            "SELECT id, key, value, user_id, team_id FROM config"
+    if dialect == "sqlite":
+        # SQLite cannot ALTER TABLE DROP CONSTRAINT, so we recreate the table.
+        connection.execute(
+            sa.text("""
+                CREATE TABLE config_new (
+                    id INTEGER NOT NULL,
+                    "key" VARCHAR NOT NULL,
+                    value VARCHAR,
+                    user_id VARCHAR,
+                    team_id VARCHAR,
+                    PRIMARY KEY (id)
+                )
+            """)
         )
-    )
-    connection.execute(sa.text("DROP TABLE config"))
-    connection.execute(sa.text("ALTER TABLE config_new RENAME TO config"))
+        connection.execute(
+            sa.text(
+                "INSERT INTO config_new (id, key, value, user_id, team_id) "
+                "SELECT id, key, value, user_id, team_id FROM config"
+            )
+        )
+        connection.execute(sa.text("DROP TABLE config"))
+        connection.execute(sa.text("ALTER TABLE config_new RENAME TO config"))
 
-    # Recreate indexes
-    op.create_index("ix_config_key", "config", ["key"], unique=False)
-    op.create_index("ix_config_user_id", "config", ["user_id"], unique=False)
-    op.create_index("ix_config_team_id", "config", ["team_id"], unique=False)
-    connection.execute(sa.text("CREATE UNIQUE INDEX uq_config_user_team_key ON config(user_id, team_id, key)"))
+        # Recreate indexes (they were dropped with the table)
+        op.create_index("ix_config_key", "config", ["key"], unique=False)
+        op.create_index("ix_config_user_id", "config", ["user_id"], unique=False)
+        op.create_index("ix_config_team_id", "config", ["team_id"], unique=False)
+        connection.execute(sa.text("CREATE UNIQUE INDEX uq_config_user_team_key ON config(user_id, team_id, key)"))
+    else:
+        # Postgres: ALTER TABLE DROP CONSTRAINT is supported, so no table recreation is needed.
+        # By the time this migration runs, the earlier migration c78d76a6d65c has already:
+        #   - recreated ix_config_key as a non-unique index
+        #   - added ix_config_user_id / ix_config_team_id
+        #   - added the composite unique constraint uq_config_user_team_key
+        # The only leftover from the initial migration's sa.UniqueConstraint("key") is the
+        # Postgres-auto-named "config_key_key" constraint — drop it so duplicate keys are
+        # allowed across different (user_id, team_id) scopes.
+        op.drop_constraint("config_key_key", "config", type_="unique")
 
 
 def downgrade() -> None:
