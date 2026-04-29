@@ -591,7 +591,7 @@ multiuser_setup() {
   fi
 
   echo "Installing SkyPilot with Kubernetes support..."
-  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" "skypilot[kubernetes]==0.10.5"
+  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" "skypilot[kubernetes]==0.12.1"
 
   echo "Multiuser setup complete."
 
