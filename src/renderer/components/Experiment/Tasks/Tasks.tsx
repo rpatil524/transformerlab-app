@@ -1369,7 +1369,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
           allJobsLoading={jobsIsLoading}
         />
       </Sheet>
-      {/* <JobsPanel
+      <JobsPanel
         title="Jobs"
         jobs={filteredJobsForDisplay as any}
         loading={jobsIsLoading}
@@ -1500,7 +1500,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
             onStopPendingChange={handleStopPendingChange}
           />
         )}
-      /> */}
+      />
       <ViewSweepResultsModal
         jobId={viewSweepResultsFromJob}
         setJobId={(jobId: string | null) => setViewSweepResultsFromJob(jobId)}
