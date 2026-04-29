@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import Box from '@mui/joy/Box';
 import CircularProgress from '@mui/joy/CircularProgress';
 import Typography from '@mui/joy/Typography';
@@ -37,12 +37,26 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   sweepResults: 'Sweep Results',
 };
 
+const VALID_SECTIONS = new Set<SectionKey>([
+  'overview',
+  'logs',
+  'checkpoints',
+  'artifacts',
+  'evalResults',
+  'sweepResults',
+]);
+
 export default function JobDetailPage() {
   const { experimentName = '', jobId = '' } = useParams<{
     experimentName: string;
     jobId: string;
   }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialSectionFromUrl = (() => {
+    const s = searchParams.get('section');
+    return s && VALID_SECTIONS.has(s as SectionKey) ? (s as SectionKey) : null;
+  })();
   const { experimentInfo, setExperimentId } = useExperimentInfo();
 
   useEffect(() => {
@@ -63,7 +77,9 @@ export default function JobDetailPage() {
   const visibleSections: SectionKey[] = job
     ? getVisibleSections(job)
     : ['overview', 'logs'];
-  const [activeSection, setActiveSection] = useState<SectionKey | null>(null);
+  const [activeSection, setActiveSection] = useState<SectionKey | null>(
+    initialSectionFromUrl,
+  );
 
   const { data: allTemplates } = useSWRWithAuth(
     experimentInfo?.id ? chatAPI.Endpoints.Task.List(experimentInfo.id) : null,

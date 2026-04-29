@@ -126,11 +126,15 @@ export default function TaskRunsPage() {
     return out;
   }, [taskJobs]);
 
-  const goToJob = (jobId: string | undefined) => {
+  const goToJob = (jobId: string | undefined, section?: string) => {
     const id = jobId == null ? '' : String(jobId);
     if (!id || id === '-1' || id === 'NaN') return;
-    navigate(`/experiment/${experimentName}/jobs/${id}`);
+    const suffix = section ? `?section=${section}` : '';
+    navigate(`/experiment/${experimentName}/jobs/${id}${suffix}`);
   };
+
+  const goToJobSection = (section: string) => (jobId: string | undefined) =>
+    goToJob(jobId, section);
 
   const copyPermalink = () => {
     navigator.clipboard
@@ -337,14 +341,14 @@ export default function TaskRunsPage() {
               jobs={taskJobs}
               launchProgressByJobId={launchProgressByJobId}
               onDeleteJob={handleDeleteJob}
-              onViewOutput={goToJob}
-              onViewCheckpoints={goToJob}
-              onViewAllArtifacts={goToJob}
-              onViewEvalImages={goToJob}
-              onViewEvalResults={goToJob}
-              onViewSweepOutput={goToJob}
-              onViewSweepResults={goToJob}
-              onViewInteractive={goToJob}
+              onViewOutput={goToJobSection('logs')}
+              onViewCheckpoints={goToJobSection('checkpoints')}
+              onViewAllArtifacts={goToJobSection('artifacts')}
+              onViewEvalImages={goToJobSection('artifacts')}
+              onViewEvalResults={goToJobSection('evalResults')}
+              onViewSweepOutput={goToJobSection('logs')}
+              onViewSweepResults={goToJobSection('sweepResults')}
+              onViewInteractive={goToJobSection('logs')}
               onViewTrackio={goToJob}
               loading={jobsLoading && taskJobs.length === 0}
               hideJobId={false}
