@@ -24,17 +24,16 @@ from transformerlab.shared.models.models import Config  # noqa: E402
 
 import pytest  # noqa: E402
 
+# Use a single event loop for all async tests in this module so that asyncpg
+# pool connections are not invalidated between tests.
+pytestmark = pytest.mark.asyncio(loop_scope="module")
 
-@pytest.mark.asyncio
+pytest_plugins = ("pytest_asyncio",)
+
+
 async def test_config_get_returns_none_for_missing():
     value = await config_get("missing_config_key")
     assert value is None
-
-
-pytest_plugins = ("pytest_asyncio",)
-
-
-pytest_plugins = ("pytest_asyncio",)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -75,7 +74,6 @@ def test_db_exists():
 
 
 class TestConfig:
-    @pytest.mark.asyncio
     async def test_config_set_and_get(self):
         await config_set("test_key", "test_value")
         value = await config_get("test_key")
@@ -96,7 +94,6 @@ class TestConfig:
         value = await config_get("test_key4")
         assert value == ""
 
-    @pytest.mark.asyncio
     async def test_team_wide_config_does_not_create_duplicates(self):
         team_id = "team-1"
         key = "team_unique_key"
@@ -119,7 +116,6 @@ class TestConfig:
         assert len(rows) == 1
         assert rows[0].value == "value2"
 
-    @pytest.mark.asyncio
     async def test_user_specific_config_does_not_create_duplicates(self):
         team_id = "team-1"
         user_id = "user-1"
