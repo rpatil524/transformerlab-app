@@ -1,6 +1,7 @@
 """SLURM provider implementation."""
 
 import asyncio
+import logging
 import requests
 import os
 import re
@@ -17,6 +18,8 @@ from .models import (
     JobState,
 )
 from transformerlab.shared.ssh_policy import get_add_if_verified_policy
+
+logger = logging.getLogger(__name__)
 
 
 class SLURMProvider(ComputeProvider):
@@ -1011,5 +1014,5 @@ class SLURMProvider(ComputeProvider):
                 return True, None
         except Exception as e:
             reason = f"SLURM provider check failed: {type(e).__name__}: {str(e)}"
-            print(reason)
+            logger.warning(reason)
             return False, reason
