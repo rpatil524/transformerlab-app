@@ -64,6 +64,15 @@ function AppContent({
     }
   }, [authContext.isAuthenticated]);
 
+  useEffect(() => {
+    if (isInvitePage && !authContext.isAuthenticated) {
+      const currentHash = window.location.hash;
+      if (currentHash) {
+        localStorage.setItem('redirectAfterLogin', currentHash);
+      }
+    }
+  }, [isInvitePage, authContext.isAuthenticated]);
+
   if (isInvitePage) {
     return (
       <Box

@@ -33,6 +33,26 @@ export default function InvitationLanding() {
   const [resultMessage, setResultMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!resultMessage) return;
+
+    const nextPath =
+      invitation?.status === 'accepted'
+        ? '/user'
+        : invitation?.status === 'rejected'
+          ? '/'
+          : null;
+    if (!nextPath) return;
+
+    const redirectTimer = window.setTimeout(() => {
+      navigate(nextPath);
+    }, 1500);
+
+    return () => {
+      window.clearTimeout(redirectTimer);
+    };
+  }, [resultMessage, invitation?.status, navigate]);
+
+  useEffect(() => {
     if (!token) {
       setLoading(false);
       setError('Missing invitation token.');
@@ -182,13 +202,22 @@ export default function InvitationLanding() {
 
             {isMismatch && (
               <Alert color="danger">
-                You are signed in as <strong>{userEmail}</strong>, but this
-                invitation is for <strong>{invitation.email}</strong>. Please
-                sign out, then sign in with the invited account.
+                You are signed in as {userEmail}, but this invitation is for{' '}
+                {invitation.email}. Please sign out, then sign in with the
+                invited account.
               </Alert>
             )}
 
-            {resultMessage && <Alert color="success">{resultMessage}</Alert>}
+            {resultMessage && (
+              <Alert color="success">
+                {resultMessage}{' '}
+                {invitation?.status === 'accepted'
+                  ? 'Redirecting to User Settings...'
+                  : invitation?.status === 'rejected'
+                    ? 'Redirecting to home...'
+                    : null}
+              </Alert>
+            )}
 
             {canAct && (
               <Stack direction="row" spacing={1}>
@@ -207,7 +236,17 @@ export default function InvitationLanding() {
             )}
 
             {!isAuthenticated && (
-              <Button onClick={() => navigate('/')}>Go to Login</Button>
+              <Button
+                onClick={() => {
+                  localStorage.setItem(
+                    'redirectAfterLogin',
+                    window.location.hash,
+                  );
+                  navigate('/');
+                }}
+              >
+                Go to Login
+              </Button>
             )}
           </Stack>
         )}
