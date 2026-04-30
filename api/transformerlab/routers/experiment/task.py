@@ -1365,7 +1365,7 @@ async def import_task_from_gallery(
         await _resolve_provider(task_data, user_and_team, session)
 
         # Get task name from task.yaml or use title
-        task_name = task_data.get("name") or title
+        task_name = task_data.get("name") or requested_name
         if "name" in task_data:
             task_data["name"] = secure_filename(task_data["name"])
         else:
