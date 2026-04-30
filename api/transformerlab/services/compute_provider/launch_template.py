@@ -272,8 +272,7 @@ async def launch_template_on_provider(
             setup_commands.append("pip install -q torch")
     if request.file_mounts is True and request.task_id:
         setup_commands.append(COPY_FILE_MOUNTS_SETUP)
-    # For RunPod providers, ensure uv is available and configured to use the
-    # system Python. This allows user commands to invoke `uv` directly.
+    # For RunPod providers, tell uv to use system Python and also install uv.
     if provider.type == ProviderType.RUNPOD.value:
         env_vars["UV_SYSTEM_PYTHON"] = "1"
         setup_commands.append("curl -LsSf https://astral.sh/uv/install.sh | sh")
