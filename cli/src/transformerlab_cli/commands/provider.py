@@ -175,7 +175,8 @@ def command_provider_add(
                 raise typer.Exit(1)
         else:
             console.print(
-                f"[error]Error:[/error] Provider health check failed. {_extract_error_detail(check_response)}"
+                "[error]Error:[/error] Provider was created, but health check failed. "
+                f"{_extract_error_detail(check_response)}"
             )
             raise typer.Exit(1)
     else:
