@@ -391,6 +391,46 @@ def test_machine_logs_error(_mock_require, _mock_fetch):
 
 
 @patch(
+    "transformerlab_cli.commands.job.fetch_logs",
+    return_value=_mock_logs_response(""),
+)
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_machine_logs_not_ready_message_pretty(_mock_require, _mock_fetch):
+    """machine-logs shows retry message from API and exits cleanly when logs are not ready yet."""
+    _mock_fetch.return_value.json.return_value = {
+        "logs": "",
+        "message": "Machine logs are not available yet while the job is still launching. Please try again shortly.",
+        "retryable": True,
+        "retry_after_seconds": 10,
+    }
+    result = runner.invoke(app, ["job", "machine-logs", "42"])
+    assert result.exit_code == 0
+    assert "not available yet" in strip_ansi(result.output)
+
+
+@patch(
+    "transformerlab_cli.commands.job.fetch_logs",
+    return_value=_mock_logs_response(""),
+)
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_machine_logs_not_ready_message_json(_mock_require, _mock_fetch):
+    """machine-logs --format json preserves retry metadata when logs are not ready yet."""
+    _mock_fetch.return_value.json.return_value = {
+        "logs": "",
+        "message": "Machine logs are not available yet while the job is still launching. Please try again shortly.",
+        "retryable": True,
+        "retry_after_seconds": 10,
+    }
+    result = runner.invoke(app, ["--format", "json", "job", "machine-logs", "42"])
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    assert data["job_id"] == "42"
+    assert data["line_count"] == 0
+    assert data["retryable"] is True
+    assert "not available yet" in data["message"]
+
+
+@patch(
     "transformerlab_cli.commands.job.fetch_task_logs",
     return_value=_mock_logs_response("sdk output line 1\nsdk output line 2"),
 )
@@ -410,6 +450,24 @@ def test_task_logs_json(_mock_require, _mock_fetch):
     assert result.exit_code == 0
     data = json.loads(result.output.strip())
     assert "sdk line" in data["logs"]
+
+
+@patch("transformerlab_cli.commands.job.fetch_task_logs", return_value=_mock_logs_response(""))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_task_logs_not_ready_message_json(_mock_require, _mock_fetch):
+    """task-logs --format json preserves retry metadata when logs are not ready yet."""
+    _mock_fetch.return_value.json.return_value = {
+        "logs": "",
+        "message": "Task logs are not available yet while the job is still launching. Please try again shortly.",
+        "retryable": True,
+        "retry_after_seconds": 10,
+    }
+    result = runner.invoke(app, ["--format", "json", "job", "task-logs", "42"])
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    assert data["job_id"] == "42"
+    assert data["retryable"] is True
+    assert "not available yet" in data["message"]
 
 
 @patch("transformerlab_cli.commands.job.api.get", return_value=_mock_logs_response("sdk line"))
@@ -450,6 +508,24 @@ def test_request_logs_json(_mock_require, _mock_fetch):
     assert result.exit_code == 0
     data = json.loads(result.output.strip())
     assert "launch log" in data["logs"]
+
+
+@patch("transformerlab_cli.commands.job.fetch_request_logs", return_value=_mock_logs_response(""))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_request_logs_not_ready_message_json(_mock_require, _mock_fetch):
+    """request-logs --format json preserves retry metadata when logs are not ready yet."""
+    _mock_fetch.return_value.json.return_value = {
+        "logs": "",
+        "message": "Request logs are not available yet while the job is still launching. Please try again shortly.",
+        "retryable": True,
+        "retry_after_seconds": 10,
+    }
+    result = runner.invoke(app, ["--format", "json", "job", "request-logs", "42"])
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    assert data["job_id"] == "42"
+    assert data["retryable"] is True
+    assert "not available yet" in data["message"]
 
 
 @patch("transformerlab_cli.commands.job.fetch_request_logs", return_value=_mock_error_response(400))

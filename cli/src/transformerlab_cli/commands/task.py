@@ -24,6 +24,23 @@ app = typer.Typer()
 REQUIRED_TASK_FIELDS = ["name", "type"]
 
 
+def _extract_error_detail(response: httpx.Response) -> str:
+    """Extract a human-readable error detail from API responses."""
+    try:
+        payload = response.json()
+    except Exception:
+        return response.text
+
+    detail = payload.get("detail", payload)
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("error") or str(detail)
+        hint = detail.get("hint")
+        return f"{message} ({hint})" if hint else message
+    if isinstance(detail, list):
+        return "; ".join(str(item) for item in detail)
+    return str(detail)
+
+
 def list_tasks(output_format: str = "pretty", experiment_id: str = "alpha") -> None:
     """List all REMOTE tasks."""
     if output_format != "json":
@@ -1060,10 +1077,21 @@ def import_from_gallery(
         else:
             console.print(f"[green]✓[/green] Task imported with ID: [bold]{task_id}[/bold]")
     else:
+        detail = _extract_error_detail(response)
         if output_format == "json":
-            print(json.dumps({"error": f"Failed to import task. Status code: {response.status_code}"}))
+            print(
+                json.dumps(
+                    {
+                        "error": "Failed to import task",
+                        "status_code": response.status_code,
+                        "detail": detail,
+                    }
+                )
+            )
             raise typer.Exit(1)
         console.print(f"[red]Error:[/red] Failed to import task. Status code: {response.status_code}")
+        if detail:
+            console.print(f"[red]Detail:[/red] {detail}")
         raise typer.Exit(1)
 
 
