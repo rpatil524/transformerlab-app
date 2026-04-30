@@ -132,6 +132,7 @@ class ProviderType(str, enum.Enum):
     RUNPOD = "runpod"
     LOCAL = "local"
     DSTACK = "dstack"
+    AWS = "aws"
 
 
 class AcceleratorType(str, enum.Enum):

@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import logging
 from typing import Dict, Any, Optional, Union, List
 
 import requests
@@ -22,6 +23,7 @@ from .models import (
 
 # Path inside the RunPod container where we tee stdout/stderr for provider log retrieval via SSH
 RUNPOD_RUN_LOGS_PATH = "/workspace/run_logs.txt"
+logger = logging.getLogger(__name__)
 
 
 async def fetch_runpod_provider_logs(
@@ -762,5 +764,5 @@ class RunpodProvider(ComputeProvider):
             return True, None
         except Exception as e:
             reason = f"Runpod provider check failed: {e}"
-            print(reason)
+            logger.warning(reason)
             return False, reason
