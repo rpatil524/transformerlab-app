@@ -272,11 +272,9 @@ async def launch_template_on_provider(
             setup_commands.append("pip install -q torch")
     if request.file_mounts is True and request.task_id:
         setup_commands.append(COPY_FILE_MOUNTS_SETUP)
-    # For RunPod providers, tell uv to use system Python.
+    # For RunPod providers, tell uv to use system Python and also install uv.
     if provider.type == ProviderType.RUNPOD.value:
         env_vars["UV_SYSTEM_PYTHON"] = "1"
-    # RunPod still needs explicit uv install in setup. AWS bootstrap handles it in user-data.
-    if provider.type == ProviderType.RUNPOD.value:
         setup_commands.append("curl -LsSf https://astral.sh/uv/install.sh | sh")
 
     # If GitHub repo fields are missing, fall back to the stored task's fields.
