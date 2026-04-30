@@ -14,6 +14,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
 from rich.syntax import Syntax
 
 import transformerlab_cli.util.api as api
+from transformerlab_cli.util import chunked_upload
 from transformerlab_cli.state import cli_state
 from transformerlab_cli.util.config import require_current_experiment
 from transformerlab_cli.util.ui import console, render_object, render_table
@@ -148,8 +149,6 @@ def _submit_task_directory(
         console.print("[warning]Cancelled.[/warning]")
         raise typer.Exit(0)
 
-    CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
-
     tmp_zip = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     tmp_zip_path = tmp_zip.name
     tmp_zip.close()
@@ -163,59 +162,26 @@ def _submit_task_directory(
                     zf.write(file_path, arcname)
 
         zip_size = os.path.getsize(tmp_zip_path)
-        total_chunks = math.ceil(zip_size / CHUNK_SIZE)
 
-        with console.status("[bold success]Initialising upload...[/bold success]", spinner="dots"):
-            init_resp = api.post_json(
-                "/upload/init",
-                json_data={"filename": "task.zip", "total_size": zip_size},
-            )
-        if init_resp.status_code != 200:
-            console.print(f"[error]Error:[/error] Upload init failed ({init_resp.status_code})")
-            raise typer.Exit(1)
-
-        upload_id = init_resp.json()["upload_id"]
-
-        # Check for already-received chunks (resumability)
-        status_resp = api.get(f"/upload/{upload_id}/status")
-        already_received: set[int] = set(
-            status_resp.json().get("received", []) if status_resp.status_code == 200 else []
-        )
-
-        with open(tmp_zip_path, "rb") as zip_fh:
-            with Progress(
-                TextColumn("[bold success]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                console=console,
-            ) as progress:
-                upload_task = progress.add_task("Uploading", total=total_chunks)
-                progress.advance(upload_task, len(already_received))
-                for i in range(total_chunks):
-                    if i in already_received:
-                        continue
-                    start = i * CHUNK_SIZE
-                    zip_fh.seek(start)
-                    chunk_data = zip_fh.read(CHUNK_SIZE)
-                    chunk_resp = api.put(
-                        f"/upload/{upload_id}/chunk?chunk_index={i}",
-                        content=chunk_data,
-                        headers={"Content-Type": "application/octet-stream"},
-                    )
-                    if chunk_resp.status_code != 200:
-                        console.print(f"[error]Error:[/error] Chunk {i} failed ({chunk_resp.status_code})")
-                        raise typer.Exit(1)
-                    progress.advance(upload_task)
-
-        with console.status("[bold success]Assembling upload...[/bold success]", spinner="dots"):
-            complete_resp = api.post_json(
-                f"/upload/{upload_id}/complete",
-                json_data={"total_chunks": total_chunks},
-                timeout=None,
-            )
-        if complete_resp.status_code != 200:
-            console.print(f"[error]Error:[/error] Upload complete failed ({complete_resp.status_code})")
-            raise typer.Exit(1)
+        with Progress(
+            TextColumn("[bold success]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            CHUNK_SIZE = 64 * 1024 * 1024  # mirrors api/transformerlab/services/upload_service.py
+            total_chunks = math.ceil(zip_size / CHUNK_SIZE) or 1
+            progress_task = progress.add_task("Uploading", total=total_chunks)
+            try:
+                upload_id = chunked_upload.upload_one_file(
+                    tmp_zip_path,
+                    server_filename="task.zip",
+                    progress=progress,
+                    progress_task=progress_task,
+                )
+            except RuntimeError as exc:
+                console.print(f"[error]Error:[/error] {exc}")
+                raise typer.Exit(1)
 
         with console.status("[bold success]Submitting task...[/bold success]", spinner="dots"):
             response = api.post_json(
