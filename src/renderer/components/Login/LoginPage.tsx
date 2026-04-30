@@ -277,7 +277,7 @@ export default function LoginPage() {
 
     if (resetTokenParam) {
       setResetToken(resetTokenParam);
-      window.location.hash = '#/reset-password';
+      window.location.hash = '#/';
     }
 
     if (token) {
@@ -385,33 +385,27 @@ export default function LoginPage() {
               {verifyMessage}
             </Typography>
           )}
-          <Routes>
-            <Route
-              path="/register"
-              element={<RegisterForm onClose={() => navigate('/')} />}
+          {resetToken ? (
+            <ResetPasswordForm
+              token={resetToken}
+              onClose={() => {
+                setResetToken(null);
+                navigate('/');
+              }}
             />
-            <Route
-              path="/forgot-password"
-              element={<ForgotPasswordForm onClose={() => navigate('/')} />}
-            />
-            <Route
-              path="/reset-password"
-              element={
-                resetToken ? (
-                  <ResetPasswordForm
-                    token={resetToken}
-                    onClose={() => {
-                      setResetToken(null);
-                      navigate('/');
-                    }}
-                  />
-                ) : (
-                  <LoginForm />
-                )
-              }
-            />
-            <Route path="*" element={<LoginForm />} />
-          </Routes>
+          ) : (
+            <Routes>
+              <Route
+                path="/register"
+                element={<RegisterForm onClose={() => navigate('/')} />}
+              />
+              <Route
+                path="/forgot-password"
+                element={<ForgotPasswordForm onClose={() => navigate('/')} />}
+              />
+              <Route path="*" element={<LoginForm />} />
+            </Routes>
+          )}
         </ModalDialog>
       </Modal>
     </Box>
