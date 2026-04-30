@@ -354,6 +354,8 @@ lab provider disable PROVIDER_ID
 # Update fields (config is MERGED with existing — pass only the keys you change)
 lab provider update PROVIDER_ID --name "new-name"
 lab provider update PROVIDER_ID --config '{"api_token": "new-token"}'
+lab provider update PROVIDER_ID --enabled        # or --disabled
+lab provider update PROVIDER_ID --default        # mark as the team default (or --no-default to clear)
 
 # Delete (use --no-interactive to skip the confirm prompt)
 lab provider delete PROVIDER_ID --no-interactive
@@ -401,7 +403,7 @@ lab provider add --no-interactive --name my-runpod --type runpod \
   --config '{"api_key": "RUNPOD_KEY", "default_gpu_type": "NVIDIA H100"}'
 ```
 
-After creating, **always run `lab provider check PROVIDER_ID`** to confirm connectivity before queuing tasks against it. If the check fails, fix the config with `lab provider update` rather than deleting and re-adding.
+`provider add` automatically runs a health check after creation, so a successful `add` already confirms connectivity. **Re-run `lab provider check PROVIDER_ID` before queuing if you're using an existing provider** (credentials may have rotated, the backend may be down) or after a `provider update` that changed config. If a check fails, fix the config with `lab provider update` rather than deleting and re-adding.
 
 ### Don't ask the user for credentials in chat
 
