@@ -114,14 +114,25 @@ Endpoints.ComputeProvider = {
   },
   GetSweepResults: (jobId: string) =>
     `${API_URL()}compute_provider/sweep/${jobId}/results`,
-  StopCluster: (providerId: string, clusterName: string) =>
-    `${API_URL()}compute_provider/providers/${providerId}/clusters/${clusterName}/stop`,
+  StopCluster: (
+    providerId: string,
+    clusterName: string,
+    jobId?: string | number,
+  ) => {
+    const base = `${API_URL()}compute_provider/providers/${providerId}/clusters/${clusterName}/stop`;
+    if (jobId === undefined || jobId === null) {
+      return base;
+    }
+    return `${base}?job_id=${encodeURIComponent(String(jobId))}`;
+  },
   UploadTemplateFile: (providerId: string, taskId: string | number) =>
     `${API_URL()}compute_provider/providers/${providerId}/launch/${taskId}/file-upload`,
   UploadTaskFile: (providerId: string, taskId: string | number) =>
     `${API_URL()}compute_provider/providers/${providerId}/launch/${taskId}/file-upload`, // Deprecated: use UploadTemplateFile
   Check: (providerId: string) =>
     `${API_URL()}compute_provider/providers/${providerId}/check`,
+  AwsCredentials: (providerId: string) =>
+    `${API_URL()}compute_provider/providers/${providerId}/aws/credentials`,
   Setup: (providerId: string) =>
     `${API_URL()}compute_provider/providers/${providerId}/setup/`,
   SetupStatus: (providerId: string) =>

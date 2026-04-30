@@ -164,9 +164,7 @@ async def launch_sweep_jobs(
 
                 run_suffix = f"sweep-{i + 1}"
                 parent_job_short_id = job_service.get_short_job_id(parent_job_id)
-                formatted_cluster_name = (
-                    f"{sanitize_cluster_basename(base_name)}-{run_suffix}-job-{parent_job_short_id}"
-                )
+                formatted_cluster_name = f"{sanitize_cluster_basename(base_name)}-{run_suffix}-{parent_job_short_id}"
 
                 child_job_id = await job_service.job_create(
                     type="REMOTE",
@@ -236,7 +234,9 @@ async def launch_sweep_jobs(
 
                 if os.getenv("TFL_REMOTE_STORAGE_ENABLED", "false").lower() == "true":
                     if STORAGE_PROVIDER == "aws":
-                        aws_profile = "transformerlab-s3"
+                        from transformerlab.shared.remote_workspace import get_default_aws_profile
+
+                        aws_profile = get_default_aws_profile()
                         aws_access_key_id, aws_secret_access_key = await asyncio.to_thread(
                             get_aws_credentials_from_file, aws_profile
                         )
@@ -346,7 +346,7 @@ async def launch_sweep_jobs(
                     "user_info": user_info or None,
                     "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
                 }
-                if request.file_mounts is True and request.task_id:
+                if request.task_id:
                     child_job_data["task_id"] = request.task_id
                 if trackio_project_name_for_child is not None:
                     child_job_data["trackio_project_name"] = trackio_project_name_for_child

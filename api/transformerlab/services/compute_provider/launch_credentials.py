@@ -12,8 +12,11 @@ COPY_FILE_MOUNTS_SETUP = 'python -c "from lab import lab; lab.copy_file_mounts()
 RUNPOD_AWS_CREDENTIALS_DIR = "/workspace/.aws"
 
 
-def get_aws_credentials_from_file(profile_name: str = "transformerlab-s3") -> Tuple[Optional[str], Optional[str]]:
+def get_aws_credentials_from_file(profile_name: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Read AWS credentials from ~/.aws/credentials for the specified profile."""
+    from transformerlab.shared.remote_workspace import get_default_aws_profile
+
+    profile_name = profile_name or get_default_aws_profile()
     credentials_path = os.path.join(os.path.expanduser("~"), ".aws", "credentials")
 
     if not os.path.exists(credentials_path):
@@ -39,7 +42,9 @@ def generate_aws_credentials_setup(
     aws_profile: Optional[str] = None,
     aws_credentials_dir: Optional[str] = None,
 ) -> str:
-    profile_name = aws_profile or os.getenv("AWS_PROFILE", "transformerlab-s3")
+    from transformerlab.shared.remote_workspace import get_default_aws_profile
+
+    profile_name = aws_profile or get_default_aws_profile()
     cred_dir = aws_credentials_dir if aws_credentials_dir else "~/.aws"
     cred_file = f"{cred_dir}/credentials" if aws_credentials_dir else "~/.aws/credentials"
 
@@ -109,3 +114,36 @@ def generate_azure_credentials_setup(
 
     exports.append("echo 'Azure storage credentials configured successfully'")
     return "; ".join(exports)
+
+
+def _aws_credentials_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".aws", "credentials")
+
+
+def write_aws_credentials_to_profile(
+    profile_name: str,
+    access_key_id: str,
+    secret_access_key: str,
+) -> None:
+    """Write AWS credentials to ~/.aws/credentials under the given profile name.
+
+    Creates the file and directory if they don't exist. Overwrites the profile
+    if it already exists, preserving all other profiles.
+    """
+    creds_path = _aws_credentials_path()
+    creds_dir = os.path.dirname(creds_path)
+    os.makedirs(creds_dir, exist_ok=True)
+    os.chmod(creds_dir, 0o700)
+
+    config = configparser.ConfigParser()
+    if os.path.exists(creds_path):
+        config.read(creds_path)
+
+    config[profile_name] = {
+        "aws_access_key_id": access_key_id,
+        "aws_secret_access_key": secret_access_key,
+    }
+
+    with open(creds_path, "w", encoding="utf-8") as f:
+        config.write(f)
+    os.chmod(creds_path, 0o600)

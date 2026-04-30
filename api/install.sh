@@ -573,7 +573,7 @@ install_general_dependencies_uv() {
 ##############################
 
 multiuser_setup() {
-  title "Install Teams Version of Transformer Lab (multiuser, latest release)"
+  title "Install Teams Version of Transformer Lab (latest release)"
 
   # Ensure we are on the latest Transformer Lab release and use lightweight uv setup
   TLAB_INSTALL_CHANNEL=latest download_transformer_lab
@@ -591,29 +591,7 @@ multiuser_setup() {
   fi
 
   echo "Installing SkyPilot with Kubernetes support..."
-  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" "skypilot[kubernetes]==0.10.5"
-
-  echo "Installing paramiko for SLURM provider support..."
-  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" paramiko
-
-  echo "Installing Sentry SDK..."
-  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" sentry-sdk
-
-  # Replace webapp with multiuser web build (login, teams, etc.)
-  ohai "Downloading multiuser web build and replacing webapp..."
-  TLAB_MULTI_URL="https://github.com/transformerlab/transformerlab-app/releases/latest/download/transformerlab_web_multiuser.tar.gz"
-  if curl -L --fail "${TLAB_MULTI_URL}" -o /tmp/transformerlab_web_multiuser.tar.gz; then
-    rm -rf "${TLAB_STATIC_WEB_DIR:?}"/* 2>/dev/null || true
-    tar -xzf /tmp/transformerlab_web_multiuser.tar.gz -C "${TLAB_STATIC_WEB_DIR}"
-    rm /tmp/transformerlab_web_multiuser.tar.gz
-    if [ -d "${TLAB_STATIC_WEB_DIR}/transformerlab_web" ]; then
-      mv "${TLAB_STATIC_WEB_DIR}/transformerlab_web/"* "${TLAB_STATIC_WEB_DIR}/" 2>/dev/null || true
-      rmdir "${TLAB_STATIC_WEB_DIR}/transformerlab_web" 2>/dev/null || true
-    fi
-    echo "Web app replaced with multiuser build."
-  else
-    echo "Warning: Could not download multiuser web build from ${TLAB_MULTI_URL}. Webapp unchanged."
-  fi
+  uv pip install --python "${GENERAL_UV_ENV_DIR}/bin/python" "skypilot[kubernetes]==0.12.1"
 
   echo "Multiuser setup complete."
 

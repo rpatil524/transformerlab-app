@@ -23,6 +23,8 @@ from .models import (
     JobState,
 )
 
+logger = logging.getLogger(__name__)
+
 # SkyPilot SDK imports - try to import, but allow graceful failure if not available
 SKYPILOT_AVAILABLE = False
 SKYPILOT_IMPORT_ERROR = None
@@ -151,6 +153,14 @@ class SkyPilotProvider(ComputeProvider):
             ]
         )
         return f"{distributed_env_setup};{run_command}"
+
+    def _normalize_dag(self, dag_result: Any) -> Any:
+        """Handle SkyPilot API variants where helpers return (dag, metadata)."""
+        if isinstance(dag_result, tuple):
+            if not dag_result:
+                raise ValueError("SkyPilot DAG conversion returned an empty tuple")
+            return dag_result[0]
+        return dag_result
 
     def _make_authenticated_request(
         self,
@@ -372,7 +382,7 @@ class SkyPilotProvider(ComputeProvider):
 
         # Convert Task to DAG and then to YAML string using SkyPilot's built-in method
         # This matches how the SDK does it internally
-        dag = dag_utils.convert_entrypoint_to_dag(task)
+        dag = self._normalize_dag(dag_utils.convert_entrypoint_to_dag(task))
 
         # Upload mounts if needed (for file mounts, etc.)
         try:
@@ -388,12 +398,12 @@ class SkyPilotProvider(ComputeProvider):
                         pass
 
             if client_common and hasattr(client_common, "upload_mounts_to_api_server"):
-                dag = client_common.upload_mounts_to_api_server(dag)
+                dag = self._normalize_dag(client_common.upload_mounts_to_api_server(dag))
         except Exception:
             # If upload_mounts fails, continue without it
             pass
 
-        dag_str = dag_utils.dump_chain_dag_to_yaml_str(dag)
+        dag_str = dag_utils.dump_dag_to_yaml_str(dag)
 
         # Get backend if specified in provider_config
         backend = None
@@ -995,7 +1005,7 @@ class SkyPilotProvider(ComputeProvider):
             task.num_nodes = job_config.num_nodes
 
         # Convert Task to DAG (matches SDK exactly)
-        dag = dag_utils.convert_entrypoint_to_dag(task)
+        dag = self._normalize_dag(dag_utils.convert_entrypoint_to_dag(task))
 
         # Validate DAG (matches SDK exactly)
         try:
@@ -1025,13 +1035,13 @@ class SkyPilotProvider(ComputeProvider):
                         pass
 
             if client_common and hasattr(client_common, "upload_mounts_to_api_server"):
-                dag = client_common.upload_mounts_to_api_server(dag, workdir_only=True)
+                dag = self._normalize_dag(client_common.upload_mounts_to_api_server(dag, workdir_only=True))
         except Exception:
             # If upload_mounts fails, continue without it
             pass
 
         # Dump DAG to YAML string (matches SDK exactly)
-        dag_str = dag_utils.dump_chain_dag_to_yaml_str(dag)
+        dag_str = dag_utils.dump_dag_to_yaml_str(dag)
 
         # Get backend if specified in provider_config
         backend = None
@@ -1896,7 +1906,7 @@ class SkyPilotProvider(ComputeProvider):
 
         return all_clusters
 
-    def check(self) -> bool:
+    def check(self) -> tuple[bool, str | None]:
         """Check if the SkyPilot provider is active and accessible."""
         try:
             # Use the /api/health endpoint to check if the server is healthy
@@ -1906,16 +1916,32 @@ class SkyPilotProvider(ComputeProvider):
             if hasattr(response, "json"):
                 health_data = response.json()
                 # Check if the status is "healthy"
-                return health_data.get("status") == "healthy"
+                status = health_data.get("status")
+                if status == "healthy":
+                    return True, None
+                reason = f"SkyPilot provider check failed: health status is '{status}'"
+                logger.warning(reason)
+                return False, reason
             else:
                 # If response doesn't have json method, check status code
-                return hasattr(response, "status_code") and response.status_code == 200
-        except requests.exceptions.ConnectionError:
+                if hasattr(response, "status_code") and response.status_code == 200:
+                    return True, None
+                status_code = getattr(response, "status_code", "unknown")
+                reason = f"SkyPilot provider check failed: unexpected health response status_code={status_code}"
+                logger.warning(reason)
+                return False, reason
+        except requests.exceptions.ConnectionError as e:
             # Connection error means server is not accessible
-            return False
-        except requests.exceptions.Timeout:
+            reason = f"SkyPilot provider check failed: connection error: {str(e)}"
+            logger.warning(reason)
+            return False, reason
+        except requests.exceptions.Timeout as e:
             # Timeout means server is not responding
-            return False
-        except Exception:
+            reason = f"SkyPilot provider check failed: timeout: {str(e)}"
+            logger.warning(reason)
+            return False, reason
+        except Exception as e:
             # For any other exceptions, assume provider is not active
-            return False
+            reason = f"SkyPilot provider check failed: {type(e).__name__}: {str(e)}"
+            logger.warning(reason)
+            return False, reason

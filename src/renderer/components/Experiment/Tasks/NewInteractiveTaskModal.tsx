@@ -35,7 +35,10 @@ import { useSWRWithAuth as useSWR } from 'renderer/lib/authContext';
 import { fetcher } from 'renderer/lib/transformerlab-api-sdk';
 import { useNotification } from 'renderer/components/Shared/NotificationSystem';
 import { generateFriendlyName } from 'renderer/lib/utils';
-import { isProviderCompatibleWithAccelerators } from './providerCompatibility';
+import {
+  getPreferredProviderId,
+  isProviderCompatibleWithAccelerators,
+} from './providerCompatibility';
 import ModelNameInput, {
   getModelHistoryKey,
   saveModelToHistory,
@@ -273,14 +276,14 @@ export default function NewInteractiveTaskModal({
       return;
     }
     if (!selectedProviderId) {
-      // Auto-select the first provider by default for a smoother experience
-      setSelectedProviderId(providers[0].id);
+      // Auto-select default provider (or first available if none is marked default).
+      setSelectedProviderId(getPreferredProviderId(providers));
       return;
     }
     if (!providers.find((p) => p.id === selectedProviderId)) {
       // If the previously selected provider is no longer available,
-      // fall back to the first available provider.
-      setSelectedProviderId(providers[0].id);
+      // fall back to default provider, then first available provider.
+      setSelectedProviderId(getPreferredProviderId(providers));
     }
   }, [open, providers, selectedProviderId]);
 
@@ -467,9 +470,10 @@ export default function NewInteractiveTaskModal({
     // Persist model name to history before submitting
     const modelName = configFieldValues['MODEL_NAME'];
     if (modelName?.trim() && selectedTemplate) {
-      const taskTypeOrId =
-        selectedTemplate.interactive_type || selectedTemplate.id;
-      saveModelToHistory(getModelHistoryKey(taskTypeOrId), modelName.trim());
+      saveModelToHistory(
+        getModelHistoryKey(selectedTemplate.interactive_type),
+        modelName.trim(),
+      );
     }
 
     onSubmit(
@@ -769,8 +773,7 @@ export default function NewInteractiveTaskModal({
                                       handleConfigFieldChange(field.env_var, v)
                                     }
                                     taskTypeOrId={
-                                      selectedTemplate?.interactive_type ||
-                                      selectedTemplate?.id
+                                      selectedTemplate?.interactive_type
                                     }
                                     placeholder={field.placeholder}
                                     disabled={isSubmitting}

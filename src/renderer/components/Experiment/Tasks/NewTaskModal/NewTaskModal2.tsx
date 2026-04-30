@@ -15,10 +15,18 @@ import {
   Input,
   Stack,
   LinearProgress,
+  List,
+  ListItem,
+  ListItemButton,
+  Typography,
+  Chip,
+  Box,
 } from '@mui/joy';
-import { PlayIcon } from 'lucide-react';
+import { PlayIcon, SearchIcon } from 'lucide-react';
 import JSZip from 'jszip';
 import * as chatAPI from 'renderer/lib/transformerlab-api-sdk';
+import { fetcher } from 'renderer/lib/transformerlab-api-sdk';
+import { useSWRWithAuth as useSWR } from 'renderer/lib/authContext';
 import { chunkedUpload, deleteUpload } from '../../../../lib/chunkedUpload';
 import TaskDirectoryUploader from './TaskDirectoryUploader';
 
@@ -50,6 +58,51 @@ export default function NewTaskModal2({
   const [showCreateBlank, setShowCreateBlank] = React.useState(false);
   const [creatingBlank, setCreatingBlank] = React.useState(false);
   const [creatingBlankTask, setCreatingBlankTask] = React.useState(false);
+  const [gallerySearch, setGallerySearch] = React.useState('');
+  const [selectedGalleryItem, setSelectedGalleryItem] = React.useState<{
+    identifier: string | number;
+    source: 'global' | 'team';
+  } | null>(null);
+
+  const { data: galleryData } = useSWR(
+    selectedOption === 'gallery' && experimentId
+      ? chatAPI.Endpoints.Task.Gallery(experimentId)
+      : null,
+    fetcher,
+  );
+  const { data: teamGalleryData } = useSWR(
+    selectedOption === 'gallery' && experimentId
+      ? chatAPI.Endpoints.Task.TeamGallery(experimentId)
+      : null,
+    fetcher,
+  );
+
+  const globalGallery: any[] = galleryData?.data || [];
+  const teamGallery: any[] = (teamGalleryData?.data || []).filter(
+    (e: any) =>
+      !(e?.subtype === 'interactive' || e?.config?.subtype === 'interactive'),
+  );
+
+  const allGalleryItems = [
+    ...globalGallery.map((t: any, i: number) => ({
+      task: t,
+      identifier: t?.id || t?.title || i,
+      source: 'global' as const,
+    })),
+    ...teamGallery.map((t: any, i: number) => ({
+      task: t,
+      identifier: t?.id || t?.title || i,
+      source: 'team' as const,
+    })),
+  ];
+
+  const filteredGalleryItems = allGalleryItems.filter(({ task }) => {
+    const q = gallerySearch.toLowerCase();
+    if (!q) return true;
+    const title = (task.title || task.name || '').toLowerCase();
+    const desc = (task.description || '').toLowerCase();
+    return title.includes(q) || desc.includes(q);
+  });
 
   // Reset state when modal opens/closes
   React.useEffect(() => {
@@ -58,12 +111,49 @@ export default function NewTaskModal2({
       setSubmitError(null);
       setCreatingBlank(false);
       setCreatingBlankTask(false);
+      setSelectedGalleryItem(null);
+      setGallerySearch('');
     }
   }, [open]);
 
   const handleSubmit = async (createIfMissing = false) => {
     setSubmitError(null);
     setShowCreateBlank(false);
+    if (selectedOption === 'gallery') {
+      if (!selectedGalleryItem) {
+        setSubmitError('Please select a task from the gallery.');
+        return;
+      }
+      setSubmitting(true);
+      try {
+        const endpoint =
+          selectedGalleryItem.source === 'team'
+            ? chatAPI.Endpoints.Task.ImportFromTeamGallery(experimentId)
+            : chatAPI.Endpoints.Task.ImportFromGallery(experimentId);
+        const response = await chatAPI.authenticatedFetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            gallery_id: selectedGalleryItem.identifier.toString(),
+            experiment_id: experimentId,
+            is_interactive: false,
+          }),
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          setSubmitError(err.detail || `Request failed: ${response.status}`);
+          return;
+        }
+        const data = await response.json();
+        onTaskCreated(data.id);
+        onClose();
+      } catch (e) {
+        setSubmitError(e instanceof Error ? e.message : 'Import failed');
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     if (selectedOption === 'blank') {
       setCreatingBlankTask(true);
       try {
@@ -217,6 +307,8 @@ export default function NewTaskModal2({
                   setSelectedOption(e.target.value);
                   setSubmitError(null);
                   setShowCreateBlank(false);
+                  setSelectedGalleryItem(null);
+                  setGallerySearch('');
                 }}
                 sx={{ gap: 2, mt: 1 }}
               >
@@ -248,6 +340,7 @@ export default function NewTaskModal2({
                 </Stack>
                 <Radio value="upload" label="Upload from your Computer" />
                 <Radio value="blank" label="Start with a blank task template" />
+                <Radio value="gallery" label="Import from Tasks Gallery" />
               </RadioGroup>
             </FormControl>
 
@@ -255,6 +348,98 @@ export default function NewTaskModal2({
               <TaskDirectoryUploader
                 onUpload={(files: File[]) => setDirectoryFiles(files)}
               />
+            )}
+
+            {selectedOption === 'gallery' && (
+              <Stack spacing={1}>
+                <Input
+                  placeholder="Search gallery tasks..."
+                  value={gallerySearch}
+                  onChange={(e) => setGallerySearch(e.target.value)}
+                  startDecorator={<SearchIcon size={16} />}
+                  size="sm"
+                />
+                <Box
+                  sx={{
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 'sm',
+                    maxHeight: 280,
+                    overflow: 'auto',
+                  }}
+                >
+                  {filteredGalleryItems.length === 0 && (
+                    <Box sx={{ p: 2, textAlign: 'center' }}>
+                      <Typography level="body-sm" color="neutral">
+                        {galleryData || teamGalleryData
+                          ? 'No tasks match your search.'
+                          : 'Loading gallery…'}
+                      </Typography>
+                    </Box>
+                  )}
+                  <List size="sm" sx={{ '--List-padding': '4px', gap: 0.5 }}>
+                    {filteredGalleryItems.map(
+                      ({ task, identifier, source }) => {
+                        const title =
+                          task.title || task.name || 'Untitled Task';
+                        const desc = task.description || '';
+                        const isSelected =
+                          selectedGalleryItem?.identifier === identifier &&
+                          selectedGalleryItem?.source === source;
+                        return (
+                          <ListItem key={`${source}-${identifier}`}>
+                            <ListItemButton
+                              selected={isSelected}
+                              onClick={() =>
+                                setSelectedGalleryItem({ identifier, source })
+                              }
+                              sx={{ borderRadius: 'sm', gap: 1 }}
+                            >
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Stack
+                                  direction="row"
+                                  spacing={1}
+                                  alignItems="center"
+                                >
+                                  <Typography
+                                    level="title-sm"
+                                    noWrap
+                                    sx={{ flex: 1 }}
+                                  >
+                                    {title}
+                                  </Typography>
+                                  <Chip
+                                    size="sm"
+                                    variant="soft"
+                                    color={
+                                      source === 'team' ? 'primary' : 'neutral'
+                                    }
+                                  >
+                                    {source === 'team' ? 'Team' : 'Global'}
+                                  </Chip>
+                                </Stack>
+                                {desc && (
+                                  <Typography
+                                    level="body-xs"
+                                    color="neutral"
+                                    sx={{
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {desc}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </ListItemButton>
+                          </ListItem>
+                        );
+                      },
+                    )}
+                  </List>
+                </Box>
+              </Stack>
             )}
 
             {submitError && (
@@ -316,7 +501,11 @@ export default function NewTaskModal2({
             color="success"
             onClick={() => handleSubmit(false)}
             loading={submitting || creatingBlankTask}
-            disabled={creatingBlank || creatingBlankTask}
+            disabled={
+              creatingBlank ||
+              creatingBlankTask ||
+              (selectedOption === 'gallery' && !selectedGalleryItem)
+            }
           >
             Submit
           </Button>

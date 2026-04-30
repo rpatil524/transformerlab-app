@@ -1,0 +1,79 @@
+# This workflow runs the API test suite against a PostgreSQL backend
+# to ensure compatibility with both SQLite and PostgreSQL.
+
+name: Pytest (PostgreSQL)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "api/**"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "api/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: api
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      FRONTEND_URL: http://localhost:8338
+      # PostgreSQL connection settings (picked up by constants.py)
+      DATABASE_HOST: localhost
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: testdb
+      DATABASE_USER: testuser
+      DATABASE_PASSWORD: testpass
+    strategy:
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv pip install --system pytest pytest-asyncio jsonschema requests pytest-cov shellcheck-py
+          # Minimal api/pyproject.toml only in CI; drop SDK pin so ../lab-sdk editable install wins
+          sed -i.bak '/^  "transformerlab==/d' pyproject.toml
+          uv pip install --system .
+          mv pyproject.toml.bak pyproject.toml || true
+      - name: Install lab-sdk in editable mode
+        run: |
+          cd ../lab-sdk
+          uv pip install --system -e .
+      - name: Test with pytest
+        run: |
+          pytest --cov=transformerlab --cov-branch --cov-report=xml -k 'not test_teams'
+      - name: Upload results to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: postgresql
