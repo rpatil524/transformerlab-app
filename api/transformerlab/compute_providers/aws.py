@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
+import shlex
 import time
 from typing import Any, Dict, List, Optional, Union
 
@@ -359,7 +361,12 @@ class AWSProvider(ComputeProvider):
 
     @staticmethod
     def _build_user_data(config: ClusterConfig, region: str) -> str:
-        env_exports = "\n".join(f'export {k}="{v}"' for k, v in config.env_vars.items())
+        env_exports_lines = []
+        for key, value in config.env_vars.items():
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ValueError(f"Invalid environment variable name: {key!r}")
+            env_exports_lines.append(f"export {key}={shlex.quote(str(value))}")
+        env_exports = "\n".join(env_exports_lines)
         setup_block = config.setup or ""
         run_cmd = config.run or ""
         return f"""#!/bin/bash
