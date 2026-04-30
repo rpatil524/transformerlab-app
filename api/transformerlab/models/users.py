@@ -120,11 +120,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
         try:
             send_password_reset_email(to_email=user.email, reset_url=reset_url)
-            email_method = os.getenv("EMAIL_METHOD", "dev").lower()
-            if email_method == "dev":
-                print("📋 Password reset link logged to console above (as you're in dev mode)")
-            else:
-                print(f"✅ Password reset email sent to {user.email}")
+            print(f"✅ Password reset email sent to {user.email}")
         except Exception as e:
             print(f"❌ Failed to send password reset email to {user.email}: {str(e)}")
 
