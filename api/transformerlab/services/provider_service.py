@@ -6,7 +6,7 @@ import os
 import platform
 import re
 import sys
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -18,6 +18,18 @@ from transformerlab.compute_providers.local import _check_amd_gpu, _check_nvidia
 from transformerlab.shared.models.models import AcceleratorType, ProviderType, Team, TeamComputeProvider, User, UserTeam
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_provider_check_result(check_result: Any) -> tuple[bool, str | None]:
+    """Normalize provider.check() output to (status, reason).
+
+    Providers' check() returns tuple[bool, str | None]; older callers may still
+    receive a bare bool, so accept both shapes.
+    """
+    if isinstance(check_result, tuple) and len(check_result) == 2:
+        is_active, reason = check_result
+        return bool(is_active), str(reason) if reason else None
+    return bool(check_result), None
 
 
 def _short_identifier(value: str, max_len: int = 8) -> str:

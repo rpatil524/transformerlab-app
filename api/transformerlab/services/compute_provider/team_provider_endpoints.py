@@ -25,19 +25,12 @@ from transformerlab.services.provider_service import (
     get_team_provider,
     list_enabled_team_providers,
     list_team_providers,
+    normalize_provider_check_result,
     update_team_provider,
 )
 from transformerlab.shared.models.models import ProviderType, TeamRole
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_provider_check_result(check_result: Any) -> tuple[bool, str | None]:
-    """Normalize provider.check() output to (status, reason)."""
-    if isinstance(check_result, tuple) and len(check_result) == 2:
-        is_active, reason = check_result
-        return bool(is_active), str(reason) if reason else None
-    return bool(check_result), None
 
 
 async def detect_local_accelerators() -> Dict[str, Any]:
@@ -259,7 +252,7 @@ async def check_provider_accessible(
     try:
         provider_instance = await get_provider_instance(provider, user_id=user_id_str, team_id=team_id)
         check_result = await asyncio.to_thread(provider_instance.check)
-        is_active, reason = _normalize_provider_check_result(check_result)
+        is_active, reason = normalize_provider_check_result(check_result)
         if is_active:
             return {"status": True, "reason": "Provider is active and accessible."}
         return {"status": False, "reason": reason or "Provider check reported unhealthy status."}
