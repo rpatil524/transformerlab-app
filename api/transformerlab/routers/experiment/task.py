@@ -1477,11 +1477,11 @@ async def import_task_from_team_gallery(
         or gallery_entry.get("interactive_gallery_id")
     )
 
-    interactive_type = gallery_entry.get("interactive_type") or (
-        inline_config.get("interactive_type") if inline_config else None
-    )
     interactive_gallery_id = gallery_entry.get("interactive_gallery_id") or (
         inline_config.get("interactive_gallery_id") if inline_config else None
+    )
+    interactive_type = gallery_entry.get("interactive_type") or (
+        inline_config.get("interactive_type") if inline_config else None
     )
 
     # --- 1) Filesystem-backed entry: read task.yaml and copy whole directory ---
