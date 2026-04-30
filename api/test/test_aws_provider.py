@@ -73,13 +73,15 @@ class TestCheck:
         mock_sts = MagicMock()
         mock_sts.get_caller_identity.return_value = {"Account": "123456789"}
         with patch.object(provider, "_get_sts_client", return_value=mock_sts):
-            assert provider.check() is True
+            assert provider.check() == (True, None)
 
     def test_returns_false_on_exception(self, provider):
         mock_sts = MagicMock()
         mock_sts.get_caller_identity.side_effect = Exception("NoCredentialProviders")
         with patch.object(provider, "_get_sts_client", return_value=mock_sts):
-            assert provider.check() is False
+            ok, reason = provider.check()
+            assert ok is False
+            assert reason == "AWS provider check failed: NoCredentialProviders"
 
 
 class TestEnsureSecurityGroup:
