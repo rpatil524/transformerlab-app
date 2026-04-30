@@ -24,6 +24,23 @@ app = typer.Typer()
 REQUIRED_TASK_FIELDS = ["name", "type"]
 
 
+def _extract_error_detail(response: httpx.Response) -> str:
+    """Extract a human-readable error detail from API responses."""
+    try:
+        payload = response.json()
+    except Exception:
+        return response.text
+
+    detail = payload.get("detail", payload)
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("error") or str(detail)
+        hint = detail.get("hint")
+        return f"{message} ({hint})" if hint else message
+    if isinstance(detail, list):
+        return "; ".join(str(item) for item in detail)
+    return str(detail)
+
+
 def list_tasks(output_format: str = "pretty", experiment_id: str = "alpha") -> None:
     """List all REMOTE tasks."""
     if output_format != "json":
@@ -377,7 +394,7 @@ def upload_files_to_task(task_id: str, path_to_upload: str, experiment_id: str, 
     raise typer.Exit(1)
 
 
-def add_task_from_github(repo_url: str, experiment_id: str) -> None:
+def add_task_from_github(repo_url: str, experiment_id: str, interactive: bool = True) -> None:
     """Add a task from a GitHub repository URL."""
     with console.status("[bold success]Creating task from GitHub...[/bold success]", spinner="dots"):
         response = api.post_json(
@@ -393,7 +410,7 @@ def add_task_from_github(repo_url: str, experiment_id: str) -> None:
         except Exception:
             detail = response.text
         if "task.yaml" in str(detail).lower():
-            if cli_state.output_format != "json":
+            if interactive and cli_state.output_format != "json":
                 console.print(
                     "[warning]task.yaml was not found in the repository.[/warning]\n"
                     "You can create a task using a default task.yaml template."
@@ -671,7 +688,7 @@ def command_task_add(
     current_experiment = require_current_experiment()
 
     if from_git:
-        add_task_from_github(from_git, experiment_id=current_experiment)
+        add_task_from_github(from_git, experiment_id=current_experiment, interactive=not no_interactive)
     elif task_directory:
         add_task_from_directory(
             task_directory, experiment_id=current_experiment, dry_run=dry_run, interactive=not no_interactive
@@ -1108,10 +1125,21 @@ def import_from_gallery(
         else:
             console.print(f"[green]✓[/green] Task imported with ID: [bold]{task_id}[/bold]")
     else:
+        detail = _extract_error_detail(response)
         if output_format == "json":
-            print(json.dumps({"error": f"Failed to import task. Status code: {response.status_code}"}))
+            print(
+                json.dumps(
+                    {
+                        "error": "Failed to import task",
+                        "status_code": response.status_code,
+                        "detail": detail,
+                    }
+                )
+            )
             raise typer.Exit(1)
         console.print(f"[red]Error:[/red] Failed to import task. Status code: {response.status_code}")
+        if detail:
+            console.print(f"[red]Detail:[/red] {detail}")
         raise typer.Exit(1)
 
 

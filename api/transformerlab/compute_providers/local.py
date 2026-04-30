@@ -3,6 +3,7 @@
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import re
 import signal
@@ -28,6 +29,8 @@ from .models import (
     JobState,
 )
 from .sandbox import make_seatbelt_preexec, wrap_command_with_bwrap, get_backend_name
+
+logger = logging.getLogger(__name__)
 
 
 def _read_local_provider_config() -> Optional[Dict[str, Any]]:
@@ -831,7 +834,7 @@ class LocalProvider(ComputeProvider):
         reason = (
             f"Local provider check failed: config file not found at {config_path} or legacy path {legacy_config_path}"
         )
-        print(reason)
+        logger.warning(reason)
         return False, reason
 
 

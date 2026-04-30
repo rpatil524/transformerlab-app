@@ -100,6 +100,23 @@ def test_task_queue_sends_description(_mock_exp, _mock_get, _mock_providers, moc
     assert body["description"] == "hypothesis: larger batch"
 
 
+@patch(
+    "transformerlab_cli.commands.task.api.post_json",
+    side_effect=[
+        _mock_resp({"detail": "task.yaml not found in repository"}, status=404),
+        _mock_resp({"id": "t1"}, status=200),
+    ],
+)
+@patch("transformerlab_cli.commands.task.require_current_experiment", return_value="exp1")
+def test_task_add_from_git_no_interactive_skips_prompt_and_retries_create_if_missing(_mock_exp, mock_post):
+    """`lab task add --from-git ... --no-interactive` should avoid prompts and retry with default task.yaml."""
+    result = runner.invoke(app, ["task", "add", "--from-git", "https://github.com/example/repo", "--no-interactive"])
+    assert result.exit_code == 0, result.output
+    assert mock_post.call_count == 2
+    retry_payload = mock_post.call_args.kwargs["json_data"]
+    assert retry_payload["create_if_missing"] is True
+
+
 @patch("transformerlab_cli.commands.task.api.post_text", return_value=_mock_resp({"valid": True}))
 @patch("transformerlab_cli.commands.task.api.put", return_value=_mock_resp({"message": "OK"}))
 @patch(

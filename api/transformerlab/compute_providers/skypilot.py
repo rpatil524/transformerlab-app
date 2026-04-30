@@ -23,6 +23,8 @@ from .models import (
     JobState,
 )
 
+logger = logging.getLogger(__name__)
+
 # SkyPilot SDK imports - try to import, but allow graceful failure if not available
 SKYPILOT_AVAILABLE = False
 SKYPILOT_IMPORT_ERROR = None
@@ -1918,7 +1920,7 @@ class SkyPilotProvider(ComputeProvider):
                 if status == "healthy":
                     return True, None
                 reason = f"SkyPilot provider check failed: health status is '{status}'"
-                print(reason)
+                logger.warning(reason)
                 return False, reason
             else:
                 # If response doesn't have json method, check status code
@@ -1926,20 +1928,20 @@ class SkyPilotProvider(ComputeProvider):
                     return True, None
                 status_code = getattr(response, "status_code", "unknown")
                 reason = f"SkyPilot provider check failed: unexpected health response status_code={status_code}"
-                print(reason)
+                logger.warning(reason)
                 return False, reason
         except requests.exceptions.ConnectionError as e:
             # Connection error means server is not accessible
             reason = f"SkyPilot provider check failed: connection error: {str(e)}"
-            print(reason)
+            logger.warning(reason)
             return False, reason
         except requests.exceptions.Timeout as e:
             # Timeout means server is not responding
             reason = f"SkyPilot provider check failed: timeout: {str(e)}"
-            print(reason)
+            logger.warning(reason)
             return False, reason
         except Exception as e:
             # For any other exceptions, assume provider is not active
             reason = f"SkyPilot provider check failed: {type(e).__name__}: {str(e)}"
-            print(reason)
+            logger.warning(reason)
             return False, reason
