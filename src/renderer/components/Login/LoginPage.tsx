@@ -101,7 +101,8 @@ export default function LoginPage() {
     const invitationToken = params.get('invitation_token');
 
     if (invitationToken) {
-      localStorage.setItem('pending_invitation_token', invitationToken);
+      window.location.hash = `#/invite?token=${encodeURIComponent(invitationToken)}`;
+      return;
     }
 
     if (token) {
