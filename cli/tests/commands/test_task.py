@@ -115,6 +115,8 @@ def test_task_add_from_git_no_interactive_skips_prompt_and_retries_create_if_mis
     assert mock_post.call_count == 2
     retry_payload = mock_post.call_args.kwargs["json_data"]
     assert retry_payload["create_if_missing"] is True
+
+
 @patch("transformerlab_cli.commands.task.api.post_text", return_value=_mock_resp({"valid": True}))
 @patch("transformerlab_cli.commands.task.api.put", return_value=_mock_resp({"message": "OK"}))
 @patch(
