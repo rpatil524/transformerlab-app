@@ -288,6 +288,60 @@ def test_job_info_pretty_still_works(_mock_require, _mock_api):
 
 
 # ---------------------------------------------------------------------------
+# Stop command tests
+# ---------------------------------------------------------------------------
+
+
+@patch("transformerlab_cli.commands.job.api.post")
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.api.get")
+def test_job_stop_also_sends_cluster_stop_when_provider_metadata_exists(_mock_get, _mock_require, mock_post):
+    """job stop should mirror GUI behavior and request provider cluster stop when possible."""
+    stop_response = MagicMock()
+    stop_response.status_code = 200
+    stop_response.json.return_value = {"message": "OK"}
+
+    job_response = MagicMock()
+    job_response.status_code = 200
+    job_response.json.return_value = {
+        "id": "42",
+        "job_data": {"provider_id": "provider-1", "cluster_name": "cluster-a"},
+    }
+
+    _mock_get.side_effect = [stop_response, job_response]
+
+    cluster_stop_response = MagicMock()
+    cluster_stop_response.status_code = 200
+    mock_post.return_value = cluster_stop_response
+
+    result = runner.invoke(app, ["job", "stop", "42"])
+    assert result.exit_code == 0, result.output
+    assert _mock_get.call_args_list[0].args[0] == "/experiment/exp1/jobs/42/stop"
+    assert _mock_get.call_args_list[1].args[0] == "/experiment/exp1/jobs/42"
+    mock_post.assert_called_once_with("/compute_provider/providers/provider-1/clusters/cluster-a/stop?job_id=42")
+
+
+@patch("transformerlab_cli.commands.job.api.post")
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.api.get")
+def test_job_stop_skips_cluster_stop_without_provider_metadata(_mock_get, _mock_require, mock_post):
+    """job stop should not call cluster-stop when provider metadata is missing."""
+    stop_response = MagicMock()
+    stop_response.status_code = 200
+    stop_response.json.return_value = {"message": "OK"}
+
+    job_response = MagicMock()
+    job_response.status_code = 200
+    job_response.json.return_value = {"id": "42", "job_data": {}}
+
+    _mock_get.side_effect = [stop_response, job_response]
+
+    result = runner.invoke(app, ["job", "stop", "42"])
+    assert result.exit_code == 0, result.output
+    mock_post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Log command tests
 # ---------------------------------------------------------------------------
 
