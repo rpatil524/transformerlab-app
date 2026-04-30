@@ -338,6 +338,38 @@ class TestLaunchCluster:
         assert mock_ec2.run_instances.call_count == 2
         mock_sleep.assert_called_once_with(10)
 
+    def test_uses_cpu_ami_for_cpu_only_launches(self, provider):
+        mock_ec2 = self._make_mock_ec2()
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(
+                provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"
+            ),
+            patch.object(provider, "_get_latest_cpu_ami", return_value="ami-cpu") as mock_cpu_ami,
+            patch.object(provider, "_get_latest_dl_ami", return_value="ami-gpu") as mock_gpu_ami,
+        ):
+            provider.launch_cluster("cpu-cluster", ClusterConfig(run="train.py"))
+        assert mock_cpu_ami.call_count == 1
+        assert mock_gpu_ami.call_count == 0
+        assert mock_ec2.run_instances.call_args[1]["ImageId"] == "ami-cpu"
+
+    def test_uses_dl_ami_for_gpu_launches(self, provider):
+        mock_ec2 = self._make_mock_ec2()
+        with (
+            patch.object(provider, "_get_ec2_client", return_value=mock_ec2),
+            patch("transformerlab.compute_providers.aws.asyncio.run", return_value="ssh-ed25519 AAAA"),
+            patch.object(
+                provider, "_ensure_iam_instance_profile", return_value="arn:aws:iam::123:instance-profile/tfl"
+            ),
+            patch.object(provider, "_get_latest_cpu_ami", return_value="ami-cpu") as mock_cpu_ami,
+            patch.object(provider, "_get_latest_dl_ami", return_value="ami-gpu") as mock_gpu_ami,
+        ):
+            provider.launch_cluster("gpu-cluster", ClusterConfig(run="train.py", accelerators="T4:1"))
+        assert mock_gpu_ami.call_count == 1
+        assert mock_cpu_ami.call_count == 0
+        assert mock_ec2.run_instances.call_args[1]["ImageId"] == "ami-gpu"
+
 
 class TestDeepLearningAmiLookup:
     def test_uses_fallback_name_pattern_when_primary_has_no_results(self, provider):
@@ -358,6 +390,27 @@ class TestDeepLearningAmiLookup:
 
         with pytest.raises(RuntimeError, match="No Deep Learning AMI found"):
             provider._get_latest_dl_ami(mock_ec2)
+
+
+class TestCpuAmiLookup:
+    def test_uses_fallback_name_pattern_when_primary_has_no_results(self, provider):
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_images.side_effect = [
+            {"Images": []},
+            {"Images": [{"ImageId": "ami-cpu-fallback", "CreationDate": "2024-05-01T00:00:00Z"}]},
+        ]
+
+        ami_id = provider._get_latest_cpu_ami(mock_ec2)
+
+        assert ami_id == "ami-cpu-fallback"
+        assert mock_ec2.describe_images.call_count == 2
+
+    def test_raises_when_no_patterns_match(self, provider):
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_images.return_value = {"Images": []}
+
+        with pytest.raises(RuntimeError, match="No CPU Ubuntu AMI found"):
+            provider._get_latest_cpu_ami(mock_ec2)
 
 
 class TestUserDataScript:

@@ -330,15 +330,7 @@ class AWSProvider(ComputeProvider):
 
         return profile_arn
 
-    def _get_latest_dl_ami(self, ec2) -> str:
-        # AWS occasionally changes DLAMI naming. Try multiple known patterns.
-        name_patterns = [
-            "Deep Learning AMI GPU PyTorch*Ubuntu*",
-            "Deep Learning Base OSS Nvidia Driver GPU AMI*Ubuntu*",
-            "Deep Learning OSS Nvidia Driver AMI GPU*Ubuntu*",
-        ]
-        owners = ["amazon", "898082745236"]
-
+    def _find_latest_ami_by_patterns(self, ec2, owners: List[str], name_patterns: List[str]) -> Optional[str]:
         for name_pattern in name_patterns:
             response = ec2.describe_images(
                 Owners=owners,
@@ -352,7 +344,39 @@ class AWSProvider(ComputeProvider):
             if images:
                 return images[0]["ImageId"]
 
+        return None
+
+    def _get_latest_dl_ami(self, ec2) -> str:
+        # AWS occasionally changes DLAMI naming. Try multiple known patterns.
+        dl_ami_name_patterns = [
+            "Deep Learning AMI GPU PyTorch*Ubuntu*",
+            "Deep Learning Base OSS Nvidia Driver GPU AMI*Ubuntu*",
+            "Deep Learning OSS Nvidia Driver AMI GPU*Ubuntu*",
+        ]
+        dl_ami_owners = ["amazon", "898082745236"]
+        ami_id = self._find_latest_ami_by_patterns(ec2, owners=dl_ami_owners, name_patterns=dl_ami_name_patterns)
+        if ami_id:
+            return ami_id
         raise RuntimeError(f"No Deep Learning AMI found in region {self.region}")
+
+    def _get_latest_cpu_ami(self, ec2) -> str:
+        # Prefer lightweight Ubuntu server AMIs for CPU-only runs.
+        ubuntu_owners = ["099720109477"]
+        ubuntu_name_patterns = [
+            "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*",
+            "ubuntu/images/hvm-ssd-gp3/ubuntu-jammy-22.04-amd64-server-*",
+            "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*",
+            "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*",
+        ]
+        ami_id = self._find_latest_ami_by_patterns(ec2, owners=ubuntu_owners, name_patterns=ubuntu_name_patterns)
+        if ami_id:
+            return ami_id
+        raise RuntimeError(f"No CPU Ubuntu AMI found in region {self.region}")
+
+    def _resolve_ami_id(self, ec2, config: ClusterConfig) -> str:
+        if config.accelerators:
+            return self._get_latest_dl_ami(ec2)
+        return self._get_latest_cpu_ami(ec2)
 
     def _resolve_instance_type(self, config: ClusterConfig) -> str:
         if config.accelerators:
@@ -435,7 +459,7 @@ if [ -x /root/.local/bin/uvx ]; then cp /root/.local/bin/uvx /usr/local/bin/uvx 
         sg_id = self._ensure_security_group(ec2)
         public_key_str = asyncio.run(_ensure_and_get_public_key())
         key_name = self._ensure_key_pair(ec2, public_key_str.encode("utf-8"))
-        ami_id = self._get_latest_dl_ami(ec2)
+        ami_id = self._resolve_ami_id(ec2, config)
         try:
             profile_arn = self._ensure_iam_instance_profile()
         except Exception as e:
