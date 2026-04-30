@@ -1022,14 +1022,29 @@ export default function ProviderDetailsModal({
                         </Option>
                       ))}
                     </Select>
-                    <Typography
-                      level="body-sm"
-                      sx={{ mt: 0.5, color: 'text.tertiary' }}
-                    >
-                      {providerId
-                        ? 'Provider type cannot be changed after creation'
-                        : ''}
-                    </Typography>
+                    {providerId ? (
+                      <Typography
+                        level="body-sm"
+                        sx={{ mt: 0.5, color: 'text.tertiary' }}
+                      >
+                        Provider type cannot be changed after creation
+                      </Typography>
+                    ) : (
+                      <Box sx={{ mt: 0.5 }}>
+                        <Button
+                          variant="plain"
+                          size="sm"
+                          onClick={() => {
+                            setType('');
+                            setNameError(null);
+                          }}
+                          disabled={loading || isSetupInProgress}
+                          sx={{ px: 0 }}
+                        >
+                          Change
+                        </Button>
+                      </Box>
+                    )}
                   </FormControl>
                   <FormControl required error={!!nameError} sx={{ mt: 1 }}>
                     <FormLabel>Compute Provider Name</FormLabel>
@@ -1255,18 +1270,6 @@ export default function ProviderDetailsModal({
                   {setupStatus}
                 </Typography>
               )}
-              {!providerId && type ? (
-                <Button
-                  variant="plain"
-                  onClick={() => {
-                    setType('');
-                    setNameError(null);
-                  }}
-                  disabled={loading || isSetupInProgress}
-                >
-                  Change Provider Type
-                </Button>
-              ) : null}
               <Button variant="outlined" onClick={onClose}>
                 Cancel
               </Button>
