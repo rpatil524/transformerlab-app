@@ -1365,6 +1365,8 @@ export default function Tasks({ subtype }: { subtype?: string }) {
           //   })
           // }
           loading={templatesIsLoading}
+          allJobs={filteredJobsForDisplay}
+          allJobsLoading={jobsIsLoading}
         />
       </Sheet>
       <JobsPanel
