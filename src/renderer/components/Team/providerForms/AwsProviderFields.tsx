@@ -35,22 +35,6 @@ export default function AwsProviderFields({
         </Typography>
       </FormControl>
 
-      {awsProfile ? (
-        <FormControl sx={{ mt: 1 }}>
-          <FormLabel>AWS Profile</FormLabel>
-          <Typography
-            level="body-sm"
-            sx={{ color: 'text.secondary', fontFamily: 'monospace' }}
-          >
-            {awsProfile}
-          </Typography>
-          <Typography level="body-sm" sx={{ mt: 0.5, color: 'text.tertiary' }}>
-            Credentials entered below are saved to this profile when you click
-            Save.
-          </Typography>
-        </FormControl>
-      ) : null}
-
       <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
         <FormControl>
           <FormLabel>Access Key ID</FormLabel>
