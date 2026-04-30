@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import re
 import shlex
 import time
@@ -21,6 +22,8 @@ from .models import (
     JobInfo,
     ResourceInfo,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -207,13 +210,14 @@ class AWSProvider(ComputeProvider):
     def _get_iam_client(self):
         return self._get_boto3_session().client("iam")
 
-    def check(self) -> bool:
+    def check(self) -> tuple[bool, str | None]:
         try:
             self._get_sts_client().get_caller_identity()
-            return True
+            return True, None
         except Exception as e:
-            print(f"AWS provider check failed: {e}")
-            return False
+            reason = f"AWS provider check failed: {e}"
+            logger.warning(reason)
+            return False, reason
 
     def _ensure_security_group(self, ec2) -> str:
         sg_name = f"transformerlab-compute-{self.team_id}"
