@@ -760,16 +760,48 @@ def _print_logs(experiment_id: str, job_id: str, output_format: str, fetch_fn, l
         response = fetch_fn(experiment_id, job_id)
 
     if response.status_code != 200:
+        detail = ""
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = str(payload.get("detail") or payload.get("message") or "")
+        except Exception:
+            detail = ""
+
         if output_format == "json":
-            print(json.dumps({"error": f"Failed to fetch {label}. Status code: {response.status_code}"}))
+            body = {"error": f"Failed to fetch {label}. Status code: {response.status_code}"}
+            if detail:
+                body["detail"] = detail
+            print(json.dumps(body))
         else:
             console.print(f"[red]Error:[/red] Failed to fetch {label}. Status code: {response.status_code}")
+            if detail:
+                console.print(f"[red]Detail:[/red] {detail}")
         raise typer.Exit(1)
 
     data = response.json()
     logs_text = data.get("logs", "") if isinstance(data, dict) else ""
+    wait_message = data.get("message", "") if isinstance(data, dict) else ""
+    retryable = bool(data.get("retryable")) if isinstance(data, dict) else False
 
     if not logs_text or "No log files found" in logs_text:
+        if wait_message and retryable:
+            if output_format == "json":
+                print(
+                    json.dumps(
+                        {
+                            "job_id": job_id,
+                            "logs": logs_text,
+                            "line_count": 0,
+                            "message": wait_message,
+                            "retryable": True,
+                            "retry_after_seconds": data.get("retry_after_seconds"),
+                        }
+                    )
+                )
+            else:
+                console.print(f"[yellow]{wait_message}[/yellow]")
+            return
         exit_with_no_results(output_format, f"No {label} found for this job")
 
     if output_format == "json":
