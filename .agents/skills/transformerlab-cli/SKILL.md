@@ -155,7 +155,7 @@ github_repo_branch: main
 
 ### Validation
 
-`lab task add` automatically validates task.yaml against the server schema before uploading. There is no standalone `lab task validate` command yet (TODO: add one).
+`lab task add` automatically validates task.yaml against the server schema before uploading. You can also validate directly with `lab task validate [path/to/task.yaml]` (defaults to `./task.yaml`).
 
 To validate without creating, use `lab task add ./my-task --dry-run`.
 

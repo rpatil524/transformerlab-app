@@ -94,29 +94,7 @@ def _submit_task_directory(
         console.print("The directory must contain a task.yaml file.")
         raise typer.Exit(1)
 
-    with open(task_yaml_path, "r", encoding="utf-8") as f:
-        task_yaml_content = f.read()
-
-    try:
-        yaml.safe_load(task_yaml_content)
-    except yaml.YAMLError as e:
-        console.print(f"[error]Error:[/error] Invalid YAML in task.yaml: {e}")
-        raise typer.Exit(1)
-
-    # Validate against server-side task.yaml schema (run, resources, etc.)
-    with console.status("[bold success]Validating task.yaml...[/bold success]", spinner="dots"):
-        response = api.post_text(
-            f"/experiment/{experiment_id}/task/validate",
-            text=task_yaml_content,
-        )
-    if response.status_code != 200:
-        try:
-            detail = response.json().get("detail", response.text)
-        except (ValueError, KeyError):
-            detail = response.text
-        console.print("[error]Error:[/error] task.yaml failed validation.")
-        console.print(f"[error]Detail:[/error] {detail}")
-        raise typer.Exit(1)
+    task_yaml_content = _validate_task_yaml_file(task_yaml_path, experiment_id=experiment_id)
 
     console.print("\n[bold label]Task Configuration (task.yaml):[/bold label]")
     syntax = Syntax(task_yaml_content, "yaml", theme="monokai", line_numbers=True)
@@ -350,20 +328,7 @@ def edit_task_yaml(
             console.print("[error]Error:[/error] Non-interactive mode requires --from-file <path-to-task.yaml>")
             raise typer.Exit(1)
 
-    with console.status("[bold success]Validating task.yaml...[/bold success]", spinner="dots"):
-        validation_response = api.post_text(
-            f"/experiment/{experiment_id}/task/validate",
-            text=edited_yaml,
-            timeout=float(timeout_seconds),
-        )
-    if validation_response.status_code != 200:
-        try:
-            detail = validation_response.json().get("detail", validation_response.text)
-        except (ValueError, KeyError):
-            detail = validation_response.text
-        console.print("[error]Error:[/error] task.yaml failed validation.")
-        console.print(f"[error]Detail:[/error] {detail}")
-        raise typer.Exit(1)
+    _validate_task_yaml_content(edited_yaml, experiment_id=experiment_id, timeout_seconds=timeout_seconds)
 
     with console.status("[bold success]Saving task.yaml...[/bold success]", spinner="dots"):
         save_response = api.put(
@@ -467,6 +432,41 @@ def _format_size(size_bytes: int) -> str:
             return f"{size_bytes:.1f} {unit}"
         size_bytes //= 1024
     return f"{size_bytes:.1f} TB"
+
+
+def _validate_task_yaml_content(task_yaml_content: str, experiment_id: str, timeout_seconds: int | None = None) -> None:
+    try:
+        yaml.safe_load(task_yaml_content)
+    except yaml.YAMLError as e:
+        console.print(f"[error]Error:[/error] Invalid YAML in task.yaml: {e}")
+        raise typer.Exit(1)
+
+    post_kwargs: dict = {"text": task_yaml_content}
+    if timeout_seconds is not None:
+        post_kwargs["timeout"] = float(timeout_seconds)
+
+    with console.status("[bold success]Validating task.yaml...[/bold success]", spinner="dots"):
+        response = api.post_text(f"/experiment/{experiment_id}/task/validate", **post_kwargs)
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail", response.text)
+        except (ValueError, KeyError):
+            detail = response.text
+        console.print("[error]Error:[/error] task.yaml failed validation.")
+        console.print(f"[error]Detail:[/error] {detail}")
+        raise typer.Exit(1)
+
+
+def _validate_task_yaml_file(task_yaml_path: str, experiment_id: str, timeout_seconds: int | None = None) -> str:
+    if not os.path.isfile(task_yaml_path):
+        console.print(f"[error]Error:[/error] task.yaml not found: {task_yaml_path}")
+        raise typer.Exit(1)
+
+    with open(task_yaml_path, "r", encoding="utf-8") as f:
+        task_yaml_content = f.read()
+
+    _validate_task_yaml_content(task_yaml_content, experiment_id=experiment_id, timeout_seconds=timeout_seconds)
+    return task_yaml_content
 
 
 ## COMMANDS ##
@@ -652,6 +652,18 @@ def command_task_add(
     else:
         console.print("[error]Error:[/error] Provide a task directory path or use --from-git <url>")
         raise typer.Exit(1)
+
+
+@app.command("validate")
+def command_task_validate(
+    task_yaml_path: str = typer.Argument("./task.yaml", help="Path to task.yaml (defaults to ./task.yaml)"),
+    timeout: int = typer.Option(300, "--timeout", help="Request timeout in seconds for validation"),
+):
+    """Validate a task.yaml file against the server schema."""
+    current_experiment = require_current_experiment()
+    resolved_path = os.path.realpath(task_yaml_path)
+    _validate_task_yaml_file(resolved_path, experiment_id=current_experiment, timeout_seconds=timeout)
+    console.print(f"[success]✓[/success] task.yaml is valid: [bold]{resolved_path}[/bold]")
 
 
 @app.command("edit")
