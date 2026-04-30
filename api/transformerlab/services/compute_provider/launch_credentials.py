@@ -131,7 +131,9 @@ def write_aws_credentials_to_profile(
     if it already exists, preserving all other profiles.
     """
     creds_path = _aws_credentials_path()
-    os.makedirs(os.path.dirname(creds_path), exist_ok=True)
+    creds_dir = os.path.dirname(creds_path)
+    os.makedirs(creds_dir, exist_ok=True)
+    os.chmod(creds_dir, 0o700)
 
     config = configparser.ConfigParser()
     if os.path.exists(creds_path):
