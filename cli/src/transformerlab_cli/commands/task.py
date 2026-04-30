@@ -434,38 +434,65 @@ def _format_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} TB"
 
 
-def _validate_task_yaml_content(task_yaml_content: str, experiment_id: str, timeout_seconds: int | None = None) -> None:
+def _validate_task_yaml_content(
+    task_yaml_content: str,
+    experiment_id: str,
+    timeout_seconds: int | None = None,
+    output_format: str = "pretty",
+) -> None:
     try:
         yaml.safe_load(task_yaml_content)
     except yaml.YAMLError as e:
-        console.print(f"[error]Error:[/error] Invalid YAML in task.yaml: {e}")
+        if output_format == "json":
+            print(json.dumps({"error": f"Invalid YAML in task.yaml: {e}"}))
+        else:
+            console.print(f"[error]Error:[/error] Invalid YAML in task.yaml: {e}")
         raise typer.Exit(1)
 
     post_kwargs: dict = {"text": task_yaml_content}
     if timeout_seconds is not None:
         post_kwargs["timeout"] = float(timeout_seconds)
 
-    with console.status("[bold success]Validating task.yaml...[/bold success]", spinner="dots"):
+    if output_format != "json":
+        with console.status("[bold success]Validating task.yaml...[/bold success]", spinner="dots"):
+            response = api.post_text(f"/experiment/{experiment_id}/task/validate", **post_kwargs)
+    else:
         response = api.post_text(f"/experiment/{experiment_id}/task/validate", **post_kwargs)
     if response.status_code != 200:
         try:
             detail = response.json().get("detail", response.text)
         except (ValueError, KeyError):
             detail = response.text
-        console.print("[error]Error:[/error] task.yaml failed validation.")
-        console.print(f"[error]Detail:[/error] {detail}")
+        if output_format == "json":
+            print(json.dumps({"error": "task.yaml failed validation", "detail": detail}))
+        else:
+            console.print("[error]Error:[/error] task.yaml failed validation.")
+            console.print(f"[error]Detail:[/error] {detail}")
         raise typer.Exit(1)
 
 
-def _validate_task_yaml_file(task_yaml_path: str, experiment_id: str, timeout_seconds: int | None = None) -> str:
+def _validate_task_yaml_file(
+    task_yaml_path: str,
+    experiment_id: str,
+    timeout_seconds: int | None = None,
+    output_format: str = "pretty",
+) -> str:
     if not os.path.isfile(task_yaml_path):
-        console.print(f"[error]Error:[/error] task.yaml not found: {task_yaml_path}")
+        if output_format == "json":
+            print(json.dumps({"error": f"task.yaml not found: {task_yaml_path}"}))
+        else:
+            console.print(f"[error]Error:[/error] task.yaml not found: {task_yaml_path}")
         raise typer.Exit(1)
 
     with open(task_yaml_path, "r", encoding="utf-8") as f:
         task_yaml_content = f.read()
 
-    _validate_task_yaml_content(task_yaml_content, experiment_id=experiment_id, timeout_seconds=timeout_seconds)
+    _validate_task_yaml_content(
+        task_yaml_content,
+        experiment_id=experiment_id,
+        timeout_seconds=timeout_seconds,
+        output_format=output_format,
+    )
     return task_yaml_content
 
 
@@ -662,8 +689,17 @@ def command_task_validate(
     """Validate a task.yaml file against the server schema."""
     current_experiment = require_current_experiment()
     resolved_path = os.path.realpath(task_yaml_path)
-    _validate_task_yaml_file(resolved_path, experiment_id=current_experiment, timeout_seconds=timeout)
-    console.print(f"[success]✓[/success] task.yaml is valid: [bold]{resolved_path}[/bold]")
+    output_format = cli_state.output_format
+    _validate_task_yaml_file(
+        resolved_path,
+        experiment_id=current_experiment,
+        timeout_seconds=timeout,
+        output_format=output_format,
+    )
+    if output_format == "json":
+        print(json.dumps({"ok": True, "path": resolved_path}))
+    else:
+        console.print(f"[success]✓[/success] task.yaml is valid: [bold]{resolved_path}[/bold]")
 
 
 @app.command("edit")
