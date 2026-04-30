@@ -118,8 +118,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:1212")
         reset_url = f"{frontend_url}/#/?reset_token={token}"
 
-        print(f"Click on reset URL to set a new password: {reset_url}")
-
         try:
             send_password_reset_email(to_email=user.email, reset_url=reset_url)
             email_method = os.getenv("EMAIL_METHOD", "dev").lower()
