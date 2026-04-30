@@ -819,14 +819,20 @@ class LocalProvider(ComputeProvider):
             )
         ]
 
-    def check(self) -> bool:
+    def check(self) -> tuple[bool, str | None]:
         """Local provider is available local config exists."""
         config_path = get_local_provider_config_path()
         if os.path.exists(config_path):
-            return True
+            return True, None
         # Backward-compat: allow existing installs that still have the file in HOME_DIR.
         legacy_config_path = os.path.join(HOME_DIR, "local_provider_config.json")
-        return os.path.exists(legacy_config_path)
+        if os.path.exists(legacy_config_path):
+            return True, None
+        reason = (
+            f"Local provider check failed: config file not found at {config_path} or legacy path {legacy_config_path}"
+        )
+        print(reason)
+        return False, reason
 
 
 def ensure_base_venv_and_requirements(

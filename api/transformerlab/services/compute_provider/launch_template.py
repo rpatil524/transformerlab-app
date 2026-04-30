@@ -602,7 +602,7 @@ async def launch_template_on_provider(
     }
     if provider.type == ProviderType.LOCAL.value and provider_config_dict.get("workspace_dir"):
         job_data["workspace_dir"] = provider_config_dict["workspace_dir"]
-    if request.file_mounts is True and request.task_id:
+    if request.task_id:
         job_data["task_id"] = request.task_id
     if trackio_project_name_for_job is not None:
         job_data["trackio_project_name"] = trackio_project_name_for_job
