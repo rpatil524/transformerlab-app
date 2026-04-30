@@ -82,6 +82,7 @@ export default function JobProgress({
           chatAPI.Endpoints.ComputeProvider.StopCluster(
             providerId,
             clusterName,
+            job.id,
           ),
           { method: 'POST' },
         );

@@ -15,11 +15,18 @@ os.environ["TRANSFORMERLAB_JWT_SECRET"] = "test-jwt-secret-for-testing-only"
 os.environ["TRANSFORMERLAB_REFRESH_SECRET"] = "test-refresh-secret-for-testing-only"
 os.environ["EMAIL_METHOD"] = "dev"  # Use dev mode for tests (no actual email sending)
 
-# Use temporary file-based database for tests (easier to debug than in-memory)
-test_db_dir = os.path.join("test", "tmp", "db")
-os.makedirs(test_db_dir, exist_ok=True)
-test_db_path = os.path.join(test_db_dir, "test_llmlab.sqlite3")
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_db_path}"
+# Determine database backend: if PostgreSQL env vars are set, use Postgres; otherwise SQLite.
+_use_postgres = all(os.environ.get(k) for k in ("DATABASE_HOST", "DATABASE_NAME", "DATABASE_USER", "DATABASE_PASSWORD"))
+
+if _use_postgres:
+    # Let constants.py build the PostgreSQL URL from DATABASE_HOST/NAME/USER/PASSWORD
+    test_db_path = None
+else:
+    # Use temporary file-based SQLite database for tests (easier to debug than in-memory)
+    test_db_dir = os.path.join("test", "tmp", "db")
+    os.makedirs(test_db_dir, exist_ok=True)
+    test_db_path = os.path.join(test_db_dir, "test_llmlab.sqlite3")
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_db_path}"
 
 from api import app  # noqa: E402
 
@@ -71,7 +78,9 @@ class AuthenticatedTestClient(TestClient):
 def cleanup_test_db():
     """Clean up test database file after all tests complete"""
     yield
-    # Clean up database file and related files (WAL, SHM)
+    if _use_postgres:
+        return  # Nothing to clean up on disk for PostgreSQL
+    # Clean up SQLite database file and related files (WAL, SHM)
     test_db_path = os.path.join("test", "tmp", "db", "test_llmlab.sqlite3")
     for ext in ["", "-wal", "-shm"]:
         db_file = test_db_path + ext
@@ -88,23 +97,28 @@ def client():
     from transformerlab.db.session import run_alembic_migrations  # noqa: E402
     from transformerlab.services.experiment_init import seed_default_admin_user  # noqa: E402
 
-    # Ensure test database directory exists
-    test_db_dir = os.path.join("test", "tmp", "db")
-    os.makedirs(test_db_dir, exist_ok=True)
+    if not _use_postgres:
+        # Ensure test database directory exists
+        test_db_dir = os.path.join("test", "tmp", "db")
+        os.makedirs(test_db_dir, exist_ok=True)
 
-    # Remove existing test database if it exists (start fresh)
-    test_db_path = os.path.join(test_db_dir, "test_llmlab.sqlite3")
-    for ext in ["", "-wal", "-shm"]:
-        db_file = test_db_path + ext
-        if os.path.exists(db_file):
-            try:
-                os.remove(db_file)
-            except OSError:
-                pass
+        # Remove existing SQLite test database if it exists (start fresh)
+        test_db_path = os.path.join(test_db_dir, "test_llmlab.sqlite3")
+        for ext in ["", "-wal", "-shm"]:
+            db_file = test_db_path + ext
+            if os.path.exists(db_file):
+                try:
+                    os.remove(db_file)
+                except OSError:
+                    pass
 
     # Run Alembic migrations to create database schema (matches production)
     asyncio.run(run_alembic_migrations())
     asyncio.run(seed_default_admin_user())
+
+    # No need to dispose the engine here: session.py auto-detects pytest and
+    # uses NullPool, so each checkout opens a fresh connection on the current
+    # event loop and there are no stale pooled connections to invalidate.
 
     with AuthenticatedTestClient(app) as c:
         yield c
