@@ -752,23 +752,15 @@ class RunpodProvider(ComputeProvider):
 
         return detailed
 
-    def check(self) -> bool:
+    def check(self) -> tuple[bool, str | None]:
         """Check if the Runpod provider is active and accessible."""
         try:
             # Make a lightweight API call to verify API key is valid
 
             self._make_request("GET", "/pods", timeout=5)
             # If we get a response (even empty), the API key is valid
-            return True
-        except requests.exceptions.HTTPError as e:
-            # 401/403 means invalid API key
-            if hasattr(e, "response") and e.response.status_code in [401, 403]:
-                print(f"Runpod provider check failed: {e.response.text}")
-                return False
-            # Other errors might be temporary
-            print(f"Runpod provider check failed: {e.response.text}")
-            return False
+            return True, None
         except Exception as e:
-            print(f"Runpod provider check failed: {e}")
-            # Connection errors, timeouts, etc.
-            return False
+            reason = f"Runpod provider check failed: {e}"
+            print(reason)
+            return False, reason

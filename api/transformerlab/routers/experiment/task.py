@@ -45,6 +45,8 @@ from transformerlab.schemas.task import (
 )
 from pydantic import ValidationError
 from fastapi.responses import PlainTextResponse, JSONResponse
+import tempfile
+import zipfile
 
 router = APIRouter(prefix="/task", tags=["task"])
 
@@ -928,6 +930,97 @@ async def create_task(
     return {"id": task_id}
 
 
+@router.post("/{task_id}/edit", summary="Update an existing task from an uploaded zip")
+async def edit_task(
+    experimentId: str,
+    task_id: str,
+    user_and_team=Depends(get_user_and_team),
+    session: AsyncSession = Depends(get_async_session),
+    upload_id: Optional[str] = None,
+):
+    """
+    Update an existing task in place.
+
+    Accepts:
+    - Query param: upload_id=<id> for a previously uploaded task zip.
+    """
+    if upload_id is None:
+        raise HTTPException(status_code=400, detail="upload_id is required")
+
+    existing_task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
+    if existing_task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    try:
+        zip_path = await get_assembled_path(upload_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    success = await task_service.update_task_from_zip_path(
+        experiment_id=experimentId,
+        task_id=task_id,
+        zip_path=zip_path,
+        existing_task=existing_task,
+        user_and_team=user_and_team,
+        session=session,
+        resolve_provider=_resolve_provider,
+        parse_yaml=_parse_yaml_to_task_data,
+    )
+    await delete_upload(upload_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    await cache.invalidate(f"tasks:{experimentId}")
+    return {"id": task_id}
+
+
+@router.post("/{task_id}/upload", summary="Upload additional files into an existing task directory")
+async def upload_task_files(
+    experimentId: str,
+    task_id: str,
+    upload_id: Optional[str] = None,
+):
+    """
+    Upload additional files to an existing task in place.
+
+    Accepts:
+    - Query param: upload_id=<id> for a previously uploaded zip.
+    """
+    if upload_id is None:
+        raise HTTPException(status_code=400, detail="upload_id is required")
+
+    existing_task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
+    if existing_task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    try:
+        zip_path = await get_assembled_path(upload_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    task_dir = await task_service.get_task_dir(task_id, experiment_id=experimentId)
+    await storage.makedirs(task_dir, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(tmpdir)
+        for root, _dirs, files in os.walk(tmpdir):
+            for name in files:
+                rel = os.path.relpath(os.path.join(root, name), tmpdir)
+                if _is_reserved_task_filename(rel):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{os.path.basename(rel)} cannot be uploaded via this endpoint",
+                    )
+        await storage.copy_dir(tmpdir, task_dir)
+
+    await delete_upload(upload_id)
+    await task_service.update_task(task_id, {"file_mounts": True}, experiment_id=experimentId)
+    await cache.invalidate(f"tasks:{experimentId}")
+    return {"id": task_id}
+
+
 @router.get("/{task_id}/yaml", summary="Get task.yaml from the task directory")
 async def get_task_yaml(experimentId: str, task_id: str):
     task = await task_service.task_get_by_id(task_id, experiment_id=experimentId)
@@ -1033,7 +1126,7 @@ async def import_task_from_gallery(
         # Create interactive task template (store interactive_gallery_id for launch-time run resolution)
         requested_name = (request.name or "").strip()
         task_name = requested_name or gallery_entry.get("name", "Interactive Task")
-        interactive_type = gallery_entry.get("interactive_type") or gallery_entry.get("id") or "custom"
+        interactive_type = gallery_entry.get("interactive_type") or "custom"
         interactive_gallery_id = gallery_entry.get("id")
 
         # Resolve task setup/command from the gallery entry's source:
@@ -1480,11 +1573,8 @@ async def import_task_from_team_gallery(
     interactive_gallery_id = gallery_entry.get("interactive_gallery_id") or (
         inline_config.get("interactive_gallery_id") if inline_config else None
     )
-    interactive_type = (
-        gallery_entry.get("interactive_type")
-        or (inline_config.get("interactive_type") if inline_config else None)
-        or gallery_entry.get("id")
-        or interactive_gallery_id
+    interactive_type = gallery_entry.get("interactive_type") or (
+        inline_config.get("interactive_type") if inline_config else None
     )
 
     # --- 1) Filesystem-backed entry: read task.yaml and copy whole directory ---

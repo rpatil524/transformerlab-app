@@ -2,16 +2,24 @@
 from typing import AsyncGenerator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as _pg_insert
+from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
 from fastapi_users.db import SQLAlchemyUserDatabase
-from sqlalchemy.dialects.sqlite import insert
 from fastapi import Depends
 import asyncio
 from os import getenv
 import uuid
 
+from transformerlab.db.constants import DATABASE_TYPE
 from transformerlab.db.session import async_session as AsyncSessionLocal
 from transformerlab.shared.models.models import Team, User, OAuthAccount
 from transformerlab.shared.remote_workspace import create_bucket_for_team
+
+# Pick the dialect-specific INSERT once at import time. Both dialects expose an
+# `on_conflict_do_update()` builder with the same surface, so callers can use
+# `_dialect_insert` uniformly. DATABASE_TYPE is fixed for the lifetime of the
+# process, so there is no need to re-check on every call.
+_dialect_insert = _pg_insert if DATABASE_TYPE == "postgresql" else _sqlite_insert
 
 
 # 5. Database session dependency
@@ -67,13 +75,15 @@ class SQLAlchemyUserDatabaseWithOAuth(SQLAlchemyUserDatabase):
         if not user_exists:
             raise ValueError(f"User with id {user.id} does not exist")
 
-        # Perform an upsert: insert if not exists, update if conflict on unique constraint
+        # Perform an upsert: insert if not exists, update if conflict on unique constraint.
+        # `_dialect_insert` is bound at module import time to the right dialect-specific
+        # INSERT (postgres or sqlite), both of which support `on_conflict_do_update`.
         stmt = (
-            insert(OAuthAccount)
+            _dialect_insert(OAuthAccount)
             .values(user_id=user.id, **create_dict)
             .on_conflict_do_update(
-                index_elements=["oauth_name", "account_id"],  # Unique index on these columns
-                set_={k: v for k, v in create_dict.items() if k not in ["id"]},  # Update all fields except primary key
+                index_elements=["oauth_name", "account_id"],
+                set_={k: v for k, v in create_dict.items() if k not in ["id"]},
             )
         )
         await self.session.execute(stmt)
