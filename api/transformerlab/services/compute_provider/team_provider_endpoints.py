@@ -31,6 +31,14 @@ from transformerlab.shared.models.models import ProviderType, TeamRole
 logger = logging.getLogger(__name__)
 
 
+def _normalize_provider_check_result(check_result: Any) -> tuple[bool, str | None]:
+    """Normalize provider.check() output to (status, reason)."""
+    if isinstance(check_result, tuple) and len(check_result) == 2:
+        is_active, reason = check_result
+        return bool(is_active), str(reason) if reason else None
+    return bool(check_result), None
+
+
 async def detect_local_accelerators() -> Dict[str, Any]:
     supported_accelerators = await asyncio.to_thread(detect_local_supported_accelerators)
     return {"supported_accelerators": supported_accelerators}
@@ -221,16 +229,20 @@ async def delete_provider_for_team(session: AsyncSession, team_id: str, provider
 
 async def check_provider_accessible(
     session: AsyncSession, team_id: str, provider_id: str, user_id_str: str
-) -> Dict[str, bool]:
+) -> Dict[str, bool | str]:
     provider = await get_team_provider(session, team_id, provider_id)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
 
     try:
         provider_instance = await get_provider_instance(provider, user_id=user_id_str, team_id=team_id)
-        is_active = await asyncio.to_thread(provider_instance.check)
-        return {"status": is_active}
+        check_result = await asyncio.to_thread(provider_instance.check)
+        is_active, reason = _normalize_provider_check_result(check_result)
+        if is_active:
+            return {"status": True, "reason": "Provider is active and accessible."}
+        return {"status": False, "reason": reason or "Provider check reported unhealthy status."}
     except Exception as e:
         error_msg = str(e)
         print(f"Failed to check provider: {error_msg}")
-        return {"status": False}
+        reason = error_msg or f"Provider check raised {type(e).__name__}"
+        return {"status": False, "reason": reason}
