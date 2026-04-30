@@ -397,5 +397,5 @@ class DstackProvider(ComputeProvider):
             return True, None
         except Exception as e:
             reason = f"dstack provider check failed: {type(e).__name__}: {str(e)}"
-            print(reason)
+            logger.warning(reason)
             return False, reason
