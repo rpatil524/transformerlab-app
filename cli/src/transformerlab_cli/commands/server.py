@@ -971,20 +971,20 @@ def server_start(
         console.print("[error]Error:[/error] Server not installed. Run [bold]lab server install[/bold] first.")
         raise typer.Exit(1)
 
-    env = os.environ.copy()
-    env["PORT"] = str(port)
+    # run.sh sets PORT="8338" unconditionally, so the env var is ignored.
+    # Pass the port via the script's -p flag instead.
+    cmd = ["bash", run_sh, "-p", str(port)]
 
     if foreground:
         console.print(f"[success]Starting server on port {port} (foreground)...[/success]")
-        result = subprocess.run(["bash", run_sh], cwd=src_dir, env=env)
+        result = subprocess.run(cmd, cwd=src_dir)
         raise typer.Exit(result.returncode)
     else:
         log_path = os.path.join(os.path.expanduser("~"), ".transformerlab", "server.log")
         log_file = open(log_path, "a", encoding="utf-8")
         proc = subprocess.Popen(
-            ["bash", run_sh],
+            cmd,
             cwd=src_dir,
-            env=env,
             stdout=log_file,
             stderr=log_file,
             start_new_session=True,
