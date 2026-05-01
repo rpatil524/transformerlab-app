@@ -75,7 +75,8 @@
       "console": "integratedTerminal",
       "skipFiles": [
         "<node_internals>/**"
-      ]
+      ],
+      "preLaunchTask": "docs: install"
     },
     {
       "type": "node",
