@@ -10,6 +10,8 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from transformerlab.db.migration_utils import table_exists
+
 
 revision: str = "b5c6d7e8f9a0"
 down_revision: Union[str, Sequence[str], None] = "b3c4d5e6f7a8"
@@ -20,14 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     connection = op.get_bind()
 
-    def table_exists(table_name: str) -> bool:
-        result = connection.execute(
-            sa.text("SELECT name FROM sqlite_master WHERE type='table' AND name=:name"),
-            {"name": table_name},
-        )
-        return result.fetchone() is not None
-
-    if not table_exists("resource_permissions"):
+    if not table_exists(connection, "resource_permissions"):
         op.create_table(
             "resource_permissions",
             sa.Column("id", sa.String(), nullable=False),

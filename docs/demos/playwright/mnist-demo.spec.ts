@@ -276,8 +276,8 @@ test.describe('MNIST Train Task Demo', () => {
     await page.waitForTimeout(CONTENT_LOAD_PAUSE); // Let runs list populate
 
     // Scroll down to find run #43 — look for the static text "43"
-    // followed by "trl-train-task-job-43"
-    const run43Text = page.getByText('trl-train-task-job-43');
+    // followed by "trl-train-task-43"
+    const run43Text = page.getByText('trl-train-task-43');
     await smoothScrollTo(page, run43Text);
     await expect(run43Text).toBeVisible({ timeout: 60_000 });
     await page.waitForTimeout(TRANSITION_PAUSE);
@@ -301,7 +301,7 @@ test.describe('MNIST Train Task Demo', () => {
     // ── Step 7: Click Checkpoints ───────────────────────────────────────
     await narrate(page, script, 'Step 7');
     // Re-scroll to run #43 area and click Checkpoints
-    const run43TextAgain = page.getByText('trl-train-task-job-43');
+    const run43TextAgain = page.getByText('trl-train-task-43');
     await smoothScrollTo(page, run43TextAgain);
 
     const run43RowAgain = run43TextAgain.locator('xpath=ancestor::tr');
@@ -320,7 +320,7 @@ test.describe('MNIST Train Task Demo', () => {
 
     // ── Step 8: Click W&B Tracking ──────────────────────────────────────
     await narrate(page, script, 'Step 8');
-    const run43TextWandb = page.getByText('trl-train-task-job-43');
+    const run43TextWandb = page.getByText('trl-train-task-43');
     await smoothScrollTo(page, run43TextWandb);
 
     const run43RowWandb = run43TextWandb.locator('xpath=ancestor::tr');

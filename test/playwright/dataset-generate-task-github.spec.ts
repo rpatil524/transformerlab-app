@@ -3,7 +3,8 @@ import { login, selectFirstExperiment } from './helpers';
 
 const GITHUB_REPO_URL =
   'https://github.com/transformerlab/transformerlab-examples';
-const GITHUB_SUBDIR = 'demo-generate-task';
+const GITHUB_SUBDIR =
+  'api/transformerlab/galleries/examples/demo-generate-task';
 
 async function replaceTaskNameInMonaco(page: Page, taskName: string) {
   const editor = page.locator('.monaco-editor').first();
@@ -66,9 +67,11 @@ test.describe('Dataset Generation Task From GitHub', () => {
     await replaceTaskNameInMonaco(page, taskName);
     await taskYamlDialog.getByRole('button', { name: 'Save' }).click();
 
-    await expect(page.getByText(taskName, { exact: true }).first()).toBeVisible({
-      timeout: 30000,
-    });
+    await expect(page.getByText(taskName, { exact: true }).first()).toBeVisible(
+      {
+        timeout: 30000,
+      },
+    );
 
     const taskRow = page.locator('tr', {
       has: page.getByText(taskName, { exact: true }),
@@ -81,7 +84,7 @@ test.describe('Dataset Generation Task From GitHub', () => {
       queueDialog.getByRole('combobox', { name: 'Compute Provider' }),
     ).toHaveText('Local', { timeout: 5000 });
     await queueDialog.getByRole('button', { name: 'Submit' }).click();
-    const jobNamePrefix = `${taskName}-job-`;
+    const jobNamePrefix = `${taskName}-`;
     const queuedJobRow = page.locator('tr', {
       has: page.getByRole('button', { name: 'Output' }),
       hasText: jobNamePrefix,
