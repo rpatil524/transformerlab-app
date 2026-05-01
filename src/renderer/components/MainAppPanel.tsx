@@ -247,6 +247,10 @@ export default function MainAppPanel({ setLogsDrawerOpen = null }) {
         <Route path="/zoo/store" element={<ModelZoo tab="store" />} />
         <Route path="/zoo/groups" element={<ModelZoo tab="groups" />} />
         <Route path="/zoo/registry" element={<ModelZoo tab="registry" />} />
+        <Route
+          path="/zoo/registry/:groupId"
+          element={<ModelZoo tab="registry" />}
+        />
         <Route path="/data" element={<Data />} />
         <Route path="/data/generated" element={<Data tab="generated" />} />
         <Route path="/data/store" element={<Data tab="store" />} />

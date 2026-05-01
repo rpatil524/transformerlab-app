@@ -3,13 +3,13 @@ import { useEffect } from 'react';
 import Sheet from '@mui/joy/Sheet';
 import { LayersIcon } from 'lucide-react';
 import { Tab, TabList, TabPanel, Tabs } from '@mui/joy';
-import { useExperimentInfo } from 'renderer/lib/ExperimentInfoContext';
-import { useNavigate } from 'react-router-dom';
-import ModelRegistry from './ModelRegistry';
+import { useNavigate, useParams } from 'react-router-dom';
+import ModelRegistryGrid from './ModelRegistryGrid';
+import ModelGroupDetail from './ModelGroupDetail';
 
 export default function ModelZoo({ tab = 'store' }) {
   const navigate = useNavigate();
-  const { experimentInfo } = useExperimentInfo();
+  const { groupId } = useParams<{ groupId?: string }>();
 
   useEffect(() => {
     if (tab !== 'registry') {
@@ -56,7 +56,11 @@ export default function ModelZoo({ tab = 'store' }) {
             flex: 1,
           }}
         >
-          <ModelRegistry />
+          {groupId ? (
+            <ModelGroupDetail groupId={groupId} />
+          ) : (
+            <ModelRegistryGrid />
+          )}
         </TabPanel>
       </Tabs>
     </Sheet>
