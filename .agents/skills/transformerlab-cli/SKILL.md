@@ -263,6 +263,44 @@ lab model edit GROUP_ID --name "New Name" --description "Updated description"
 lab model delete GROUP_ID --yes
 ```
 
+### Uploading model files
+
+```bash
+# Upload local files/directories to a model on the server.
+# Creates the model if it doesn't exist; MODEL_ID is what you'll use
+# in subsequent lab model commands.
+lab model upload MODEL_ID ./path/to/model-dir
+
+# Multiple paths in one call
+lab model upload MODEL_ID ./tokenizer.json ./config.json
+
+# Overwrite server-side files that already exist
+lab model upload MODEL_ID ./path/to/model-dir --force
+```
+
+The server runs a finalize step at the end of `upload`. Finalize fails with `cannot finalize: no config.json present. Upload one first.` unless the upload includes a `config.json` at the root with at least an `architectures` field. Minimal example:
+
+```json
+{
+  "model_type": "fake",
+  "architectures": ["LlamaForCausalLM"],
+  "hidden_size": 4096
+}
+```
+
+For real models this is the standard HuggingFace `config.json`. The server records `architectures[0]` as the model architecture.
+
+Re-running `lab model upload` against the same `MODEL_ID` skips files that already exist on the server and exits with code 2 (skipped some, did not fail). Use `--force` to overwrite.
+
+### Downloading model files
+
+```bash
+# Download a previously-uploaded model to <dest>/<MODEL_ID>/
+lab model download MODEL_ID ./local-models
+```
+
+The server streams every file in the model directory; the destination directory is created if missing, and files land under `<dest>/<MODEL_ID>/`.
+
 ### Publishing a model from a job
 
 After a training job completes, publish its output model to the registry:
@@ -561,6 +599,8 @@ This applies to launching jobs, fetching logs, checking cluster status, and ever
 | `lab model create <asset_id>` | Create a new model group + first version (`--name`, `--description`, `--tag`) | No |
 | `lab model edit <id>` | Edit model group name or description | No |
 | `lab model delete <id>` | Delete a model group and all versions (`--yes` to skip prompt) | No |
+| `lab model upload <id> <path...>` | Upload local files/dirs to a model (creates if needed; `--force` to overwrite) | No |
+| `lab model download <id> <dest>` | Download a model's files to `<dest>/<id>/` | No |
 | `lab dataset list` | List all dataset groups | No |
 | `lab dataset info <id>` | Show dataset group details (by group_id or group_name) | No |
 | `lab dataset upload <id> <files...>` | Upload local files to a dataset (creates if needed) | No |
