@@ -913,6 +913,40 @@ def server_version() -> None:
             console.print("[dim]Could not check for updates.[/dim]")
 
 
+def _find_server_pids(port: int) -> list[int]:
+    """Find PIDs of processes listening on the given port."""
+    pids: list[int] = []
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    pids.append(int(line))
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # lsof not available, try ss/netstat as fallback (Linux)
+        try:
+            result = subprocess.run(
+                ["ss", "-tlnp", f"sport = :{port}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                import re
+
+                for match in re.finditer(r"pid=(\d+)", result.stdout):
+                    pids.append(int(match.group(1)))
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    return sorted(set(pids))
+
+
 @app.command("stop")
 def server_stop(
     port: int = typer.Option(8338, "--port", help="Port the server is running on"),
@@ -1032,40 +1066,6 @@ def server_restart(
 
     # Start
     server_start(port=port, foreground=False)
-
-
-def _find_server_pids(port: int) -> list[int]:
-    """Find PIDs of processes listening on the given port."""
-    pids: list[int] = []
-    try:
-        result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            for line in result.stdout.strip().splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    pids.append(int(line))
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        # lsof not available, try ss/netstat as fallback (Linux)
-        try:
-            result = subprocess.run(
-                ["ss", "-tlnp", f"sport = :{port}"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                import re
-
-                for match in re.finditer(r"pid=(\d+)", result.stdout):
-                    pids.append(int(match.group(1)))
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-    return sorted(set(pids))
 
 
 @app.command("update")
