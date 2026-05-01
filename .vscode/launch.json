@@ -64,6 +64,20 @@
       "internalConsoleOptions": "neverOpen"
     },
     {
+      "name": "Docs: Docusaurus Dev Server",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/transformerlab-docs",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "start"
+      ],
+      "console": "integratedTerminal",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
       "type": "node",
       "request": "attach",
       "name": "Attach to CLI",
