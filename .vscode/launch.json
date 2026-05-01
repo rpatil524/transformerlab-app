@@ -68,7 +68,7 @@
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}/transformerlab-docs",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "yarn",
       "runtimeArgs": [
         "start"
       ],
