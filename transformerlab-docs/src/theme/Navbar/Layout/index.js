@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import { useLocation } from '@docusaurus/router';
@@ -21,8 +21,6 @@ function NavbarBackdrop({ onClick }) {
   );
 }
 
-const DISMISSED_BANNER_KEY = 'tlab-dismissed-deprecated-install-banner';
-
 export default function NavbarLayout({ children }) {
   const {
     navbar: { hideOnScroll, style },
@@ -30,52 +28,21 @@ export default function NavbarLayout({ children }) {
   const { pathname } = useLocation();
   const mobileSidebar = useNavbarMobileSidebar();
   const { navbarRef, isNavbarVisible } = useHideableNavbar(hideOnScroll);
-  const [
-    isDeprecatedInstallBannerDismissed,
-    setIsDeprecatedInstallBannerDismissed,
-  ] = useState(false);
   const isDeprecatedInstallRoute =
     pathname === '/docs/category/install' ||
     pathname === '/docs/install' ||
     pathname.startsWith('/docs/category/install/') ||
     pathname.startsWith('/docs/install/');
-  const shouldShowDeprecatedInstallBanner =
-    isDeprecatedInstallRoute && !isDeprecatedInstallBannerDismissed;
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    setIsDeprecatedInstallBannerDismissed(
-      localStorage.getItem(DISMISSED_BANNER_KEY) === 'true',
-    );
-  }, []);
-
-  const dismissDeprecatedInstallBanner = () => {
-    setIsDeprecatedInstallBannerDismissed(true);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(DISMISSED_BANNER_KEY, 'true');
-    }
-  };
 
   return (
     <>
-      {shouldShowDeprecatedInstallBanner && (
+      {isDeprecatedInstallRoute && (
         <div className={styles.deprecatedInstallBanner} role="status">
           <span>
             This page is no longer maintained. See the latest setup steps on
             the{' '}
           </span>
           <Link to="/for-teams/install">For Teams install page</Link>.
-          <button
-            type="button"
-            aria-label="Dismiss install notice"
-            className={styles.dismissDeprecatedInstallBannerButton}
-            onClick={dismissDeprecatedInstallBanner}
-          >
-            x
-          </button>
         </div>
       )}
       <nav
