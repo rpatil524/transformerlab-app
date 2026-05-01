@@ -32,7 +32,7 @@ npx skills add transformerlab/transformerlab-app --skill transformerlab-cli
 
 You'll need [Node.js](https://nodejs.org) installed (`npx` ships with it). If `npx` is missing, the command will tell you.
 
-If you prefer to run the underlying `npx` invocation directly — for example in an environment that doesn't have the `lab` CLI installed yet — that one-liner above works on its own.
+If you prefer to run the underlying `npx` invocation directly, that one-liner above works on its own. (You'll still need the `lab` CLI installed for the skill itself to be useful — the skill drives Transformer Lab by calling `lab` commands.)
 
 ## What it teaches the agent
 
