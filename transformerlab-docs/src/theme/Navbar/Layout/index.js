@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import clsx from 'clsx';
+import Link from '@docusaurus/Link';
+import { useLocation } from '@docusaurus/router';
 import { ThemeClassNames, useThemeConfig } from '@docusaurus/theme-common';
 import {
   useHideableNavbar,
@@ -8,47 +10,100 @@ import {
 import { translate } from '@docusaurus/Translate';
 import NavbarMobileSidebar from '@theme/Navbar/MobileSidebar';
 import styles from './styles.module.css';
-function NavbarBackdrop(props) {
+
+function NavbarBackdrop({ onClick }) {
   return (
     <div
       role="presentation"
-      {...props}
-      className={clsx('navbar-sidebar__backdrop', props.className)}
+      onClick={onClick}
+      className="navbar-sidebar__backdrop"
     />
   );
 }
+
+const DISMISSED_BANNER_KEY = 'tlab-dismissed-deprecated-install-banner';
+
 export default function NavbarLayout({ children }) {
   const {
     navbar: { hideOnScroll, style },
   } = useThemeConfig();
+  const { pathname } = useLocation();
   const mobileSidebar = useNavbarMobileSidebar();
   const { navbarRef, isNavbarVisible } = useHideableNavbar(hideOnScroll);
+  const [
+    isDeprecatedInstallBannerDismissed,
+    setIsDeprecatedInstallBannerDismissed,
+  ] = useState(false);
+  const isDeprecatedInstallRoute =
+    pathname === '/docs/category/install' ||
+    pathname === '/docs/install' ||
+    pathname.startsWith('/docs/category/install/') ||
+    pathname.startsWith('/docs/install/');
+  const shouldShowDeprecatedInstallBanner =
+    isDeprecatedInstallRoute && !isDeprecatedInstallBannerDismissed;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    setIsDeprecatedInstallBannerDismissed(
+      localStorage.getItem(DISMISSED_BANNER_KEY) === 'true',
+    );
+  }, []);
+
+  const dismissDeprecatedInstallBanner = () => {
+    setIsDeprecatedInstallBannerDismissed(true);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(DISMISSED_BANNER_KEY, 'true');
+    }
+  };
+
   return (
-    <nav
-      ref={navbarRef}
-      aria-label={translate({
-        id: 'theme.NavBar.navAriaLabel',
-        message: 'Main',
-        description: 'The ARIA label for the main navigation',
-      })}
-      className={clsx(
-        ThemeClassNames.layout.navbar.container,
-        'navbar',
-        'navbar--fixed-top',
-        hideOnScroll && [
-          styles.navbarHideable,
-          !isNavbarVisible && styles.navbarHidden,
-        ],
-        {
-          'navbar--dark': style === 'dark',
-          'navbar--primary': style === 'primary',
-          'navbar-sidebar--show': mobileSidebar.shown,
-        },
+    <>
+      {shouldShowDeprecatedInstallBanner && (
+        <div className={styles.deprecatedInstallBanner} role="status">
+          <span>
+            This page is no longer maintained. See the latest setup steps on
+            the{' '}
+          </span>
+          <Link to="/for-teams/install">For Teams install page</Link>.
+          <button
+            type="button"
+            aria-label="Dismiss install notice"
+            className={styles.dismissDeprecatedInstallBannerButton}
+            onClick={dismissDeprecatedInstallBanner}
+          >
+            x
+          </button>
+        </div>
       )}
-    >
-      {children}
-      <NavbarBackdrop onClick={mobileSidebar.toggle} />
-      <NavbarMobileSidebar />
-    </nav>
+      <nav
+        ref={navbarRef}
+        aria-label={translate({
+          id: 'theme.NavBar.navAriaLabel',
+          message: 'Main',
+          description: 'The ARIA label for the main navigation',
+        })}
+        className={clsx(
+          ThemeClassNames.layout.navbar.container,
+          'navbar',
+          'navbar--fixed-top',
+          hideOnScroll && [
+            styles.navbarHideable,
+            !isNavbarVisible && styles.navbarHidden,
+          ],
+          {
+            'navbar--dark': style === 'dark',
+            'navbar--primary': style === 'primary',
+            'navbar-sidebar--show': mobileSidebar.shown,
+          },
+        )}
+      >
+        {children}
+        <NavbarBackdrop onClick={mobileSidebar.toggle} />
+        <NavbarMobileSidebar />
+      </nav>
+    </>
   );
 }
