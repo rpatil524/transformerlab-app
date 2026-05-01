@@ -1,6 +1,6 @@
 ---
 name: transformerlab-cli
-description: Transformer Lab CLI for managing ML training tasks, jobs, compute providers, models, and datasets. Use when the user needs to check job status, stream logs, download artifacts, queue training tasks, upload or edit tasks, manage compute providers, list or create models, upload or download datasets, publish job outputs, or interact with Transformer Lab programmatically. Triggers include "check job status", "download results", "queue a task", "upload a task", "edit a task", "list providers", "stream logs", "what's running", "monitor training", "add a task", "check provider health", "list models", "create model", "upload dataset", "download dataset", "publish model", "publish dataset".
+description: Transformer Lab CLI for managing ML training tasks, jobs, compute providers, models, and datasets. Use when the user needs to check job status, stream logs, download artifacts, queue training tasks, upload or edit tasks, manage compute providers, list or create models, upload or download datasets, publish job outputs, or interact with Transformer Lab programmatically. Triggers include "check job status", "download results", "queue a task", "upload a task", "edit a task", "list providers", "add provider", "configure provider", "stream logs", "what's running", "monitor training", "add a task", "check provider health", "list models", "create model", "upload dataset", "download dataset", "publish model", "publish dataset".
 allowed-tools: Bash(lab *), Bash(curl *beta.lab.cloud*), Bash(curl *localhost:8338*)
 ---
 
@@ -263,6 +263,44 @@ lab model edit GROUP_ID --name "New Name" --description "Updated description"
 lab model delete GROUP_ID --yes
 ```
 
+### Uploading model files
+
+```bash
+# Upload local files/directories to a model on the server.
+# Creates the model if it doesn't exist; MODEL_ID is what you'll use
+# in subsequent lab model commands.
+lab model upload MODEL_ID ./path/to/model-dir
+
+# Multiple paths in one call
+lab model upload MODEL_ID ./tokenizer.json ./config.json
+
+# Overwrite server-side files that already exist
+lab model upload MODEL_ID ./path/to/model-dir --force
+```
+
+The server runs a finalize step at the end of `upload`. Finalize fails with `cannot finalize: no config.json present. Upload one first.` unless the upload includes a `config.json` at the root with at least an `architectures` field. Minimal example:
+
+```json
+{
+  "model_type": "fake",
+  "architectures": ["LlamaForCausalLM"],
+  "hidden_size": 4096
+}
+```
+
+For real models this is the standard HuggingFace `config.json`. The server records `architectures[0]` as the model architecture.
+
+Re-running `lab model upload` against the same `MODEL_ID` skips files that already exist on the server and exits with code 2 (skipped some, did not fail). Use `--force` to overwrite.
+
+### Downloading model files
+
+```bash
+# Download a previously-uploaded model to <dest>/<MODEL_ID>/
+lab model download MODEL_ID ./local-models
+```
+
+The server streams every file in the model directory; the destination directory is created if missing, and files land under `<dest>/<MODEL_ID>/`.
+
 ### Publishing a model from a job
 
 After a training job completes, publish its output model to the registry:
@@ -332,14 +370,91 @@ lab dataset upload my-dataset train.jsonl eval.jsonl
 lab task queue TASK_ID --no-interactive -m "Training on my-dataset"
 ```
 
+## Managing Providers
+
+Use `lab provider` commands to list, inspect, add, configure, enable/disable, and health-check compute providers. Providers are the backends that actually run jobs (Local, SkyPilot clusters, Slurm clusters, RunPod).
+
+```bash
+# List providers (omit --include-disabled by default — only active ones show)
+lab --format json provider list
+lab --format json provider list --include-disabled
+
+# Show details for one provider
+lab --format json provider info PROVIDER_ID
+
+# Health check (verifies the CLI can reach the provider's backend)
+lab --format json provider check PROVIDER_ID
+
+# Toggle availability without deleting
+lab provider enable PROVIDER_ID
+lab provider disable PROVIDER_ID
+
+# Update fields (config is MERGED with existing — pass only the keys you change)
+lab provider update PROVIDER_ID --name "new-name"
+lab provider update PROVIDER_ID --config '{"api_token": "new-token"}'
+lab provider update PROVIDER_ID --enabled        # or --disabled
+lab provider update PROVIDER_ID --default        # mark as the team default (or --no-default to clear)
+
+# Delete (use --no-interactive to skip the confirm prompt)
+lab provider delete PROVIDER_ID --no-interactive
+```
+
+### When to add a provider
+
+**Default to listing first.** Before adding anything, run `lab provider list` to see what already exists. Most servers ship with a `local` provider already configured. Only add a new provider when:
+
+1. The user **explicitly asks** to add/configure a specific backend (Slurm, SkyPilot, RunPod).
+2. `lab provider list` shows none of the existing providers match the resources the user needs (e.g. they want H100s and only `local` is registered).
+3. A `task queue` attempt failed with "No compute providers available".
+
+**Do NOT add a provider speculatively.** Adding one writes credentials/URLs to the server and may fail health checks until configured correctly. If it's unclear which provider type the user wants, ask.
+
+### Adding a provider non-interactively
+
+`provider add` requires `--name`, `--type`, and `--config` (a JSON string) when run with `--no-interactive`. The config schema depends on the type:
+
+| Type | Required/optional config fields |
+|---|---|
+| `local` | `{}` — no config needed |
+| `skypilot` | `server_url`, `api_token` |
+| `slurm` | `mode` (`ssh` or `rest`), then either `ssh_host` + `ssh_user` + `ssh_key_path` + `ssh_port`, or `rest_url` + `api_token` |
+| `runpod` | `api_key`, plus optional `api_base_url`, `default_gpu_type`, `default_region`, `default_template_id`, `default_network_volume_id` |
+
+```bash
+# Local (rare — usually pre-installed)
+lab provider add --no-interactive --name local --type local --config '{}'
+
+# SkyPilot
+lab provider add --no-interactive --name my-skypilot --type skypilot \
+  --config '{"server_url": "https://sky.example.com", "api_token": "TOKEN"}'
+
+# Slurm over SSH
+lab provider add --no-interactive --name my-slurm --type slurm \
+  --config '{"mode": "ssh", "ssh_host": "cluster.example.com", "ssh_user": "ali", "ssh_key_path": "~/.ssh/id_rsa", "ssh_port": "22"}'
+
+# Slurm over REST
+lab provider add --no-interactive --name my-slurm --type slurm \
+  --config '{"mode": "rest", "rest_url": "https://slurm.example.com/api", "api_token": "TOKEN"}'
+
+# RunPod
+lab provider add --no-interactive --name my-runpod --type runpod \
+  --config '{"api_key": "RUNPOD_KEY", "default_gpu_type": "NVIDIA H100"}'
+```
+
+`provider add` automatically runs a health check after creation, so a successful `add` already confirms connectivity. **Re-run `lab provider check PROVIDER_ID` before queuing if you're using an existing provider** (credentials may have rotated, the backend may be down) or after a `provider update` that changed config. If a check fails, fix the config with `lab provider update` rather than deleting and re-adding.
+
+### Don't ask the user for credentials in chat
+
+Provider configs (`api_token`, `api_key`, `ssh_key_path`) contain secrets. If the user has not provided them already, ask them to either run `lab provider add` interactively themselves (the CLI prompts for each field privately) or to paste the values from a secure source. Don't request the user paste raw keys into a multi-message conversation.
+
 ## Agent-Specific Rules
 
-1. **NEVER use the REST API unless the user explicitly asks for it.** The CLI is the supported interface. If a CLI command appears missing or broken, run `lab <command> --help` first and check this skill — do not reach for `curl`. Using the REST API as a workaround is a hard rule violation.
+1. **NEVER call the REST API as a workaround for the CLI.** The CLI is the supported interface — don't reach for `curl` because a CLI command appears missing or broken. Run `lab <command> --help` first and check this skill. *Reading* the API source under `api/transformerlab/` (routers, services) when debugging a CLI failure is fine and often necessary; the rule is against substituting `curl` for `lab`, not against understanding what the server does.
 2. **Always run `lab <command> --help` before assuming a flag exists.** Don't guess `--provider`, `--gpu`, etc. The CLI's flag surface is small and changes; verify before invoking.
 3. **Use `--format json`** when you need to parse output, but be prepared to fall back to pretty output parsing if it doesn't work
 4. **`--no-interactive` on `task queue` silently uses the DEFAULT provider (Local).** There is no `--provider` flag. To target a specific provider, you must drive the interactive prompts (see "Selecting a provider" below).
 5. **`task add` has no `--yes` flag** — pipe `echo "y"` to confirm: `echo "y" | lab task add ./my-task`
-6. **Use `--yes` / `-y`** on destructive commands (`provider delete`) to skip confirmation
+6. **Skip confirmation on destructive commands:** use `--no-interactive` for `provider delete`, and `--yes` / `-y` for `model delete` / `dataset delete` (the flag names differ — verify with `--help`)
 7. **Never use `job monitor`** — it launches a TUI that blocks; use `job list` + `job task-logs` instead
 8. **Never use `task interactive`** unless the user specifically requests an interactive session
 9. **`job task-logs --follow`** streams continuously and blocks until the job finishes — use when the user wants real-time monitoring
@@ -434,15 +549,17 @@ lab job request-logs JOB_ID   # provider launch/provisioning logs
 
 Use `lab job info JOB_ID` — it shows `cluster_name` and provisioning state. For more detail use `lab job request-logs JOB_ID` (provider launch logs). If a cluster never provisioned, the request-logs will show why (wrong accelerator type, quota, etc.).
 
-## Do NOT use the REST API
+## Do NOT call the REST API as a CLI workaround
 
-The CLI is the supported, sanctioned interface. **Never call the REST API directly with `curl` unless the user explicitly asks you to.** If the CLI seems to be missing a capability:
+The CLI is the supported, sanctioned interface. **Never call the REST API with `curl` because a CLI command appears missing or broken** — that's the rule. If a CLI command seems missing or wrong:
 
 1. Run `lab <command> --help` and `lab <subcommand> --help` to verify
 2. Re-read this skill for the right pattern (e.g. interactive prompts via stdin)
 3. Tell the user the CLI doesn't support it — don't silently switch to `curl`
 
 This applies to launching jobs, fetching logs, checking cluster status, and everything else.
+
+**Reading the API source code is encouraged.** When debugging *why* a CLI call is failing — wrong response, silent filter, unexpected output — opening files under `api/transformerlab/` (routers, services) is the right move. That's investigation, not a workaround. The rule is against substituting `curl` calls for `lab` calls, not against understanding what the server does.
 
 ## Command Overview
 
@@ -484,6 +601,8 @@ This applies to launching jobs, fetching logs, checking cluster status, and ever
 | `lab model create <asset_id>` | Create a new model group + first version (`--name`, `--description`, `--tag`) | No |
 | `lab model edit <id>` | Edit model group name or description | No |
 | `lab model delete <id>` | Delete a model group and all versions (`--yes` to skip prompt) | No |
+| `lab model upload <id> <path...>` | Upload local files/dirs to a model (creates if needed; `--force` to overwrite) | No |
+| `lab model download <id> <dest>` | Download a model's files to `<dest>/<id>/` | No |
 | `lab dataset list` | List all dataset groups | No |
 | `lab dataset info <id>` | Show dataset group details (by group_id or group_name) | No |
 | `lab dataset upload <id> <files...>` | Upload local files to a dataset (creates if needed) | No |
@@ -524,17 +643,17 @@ With non-zero exit code.
 - Connection refused → check server URL with `lab config`, verify server is running
 - "No compute providers available" → add a provider in team settings first, or check `provider list`
 
-## When to Use CLI vs REST API vs Browser
+## When to Use CLI vs Reading API Source vs Browser
 
-| Use CLI for | Use REST API for | Use Browser for |
+| Use CLI for | Read API source for | Use Browser for |
 |---|---|---|
-| Login, config, status checks | Launching jobs when CLI fails | Creating experiments |
-| Listing tasks and jobs | Getting provider logs | Configuring tasks via forms |
-| Streaming job logs (`--follow`) | Checking cluster status | Visual UI verification |
-| Adding tasks from local dirs | Any operation where CLI returns errors | Creating API keys |
-| Downloading artifacts | Debugging failed jobs | Managing team settings |
+| Login, config, status checks | Understanding why a CLI call returned wrong data | Creating experiments |
+| Listing tasks and jobs | Tracing what `/model/finalize` etc. actually do on the server | Configuring tasks via forms |
+| Streaming job logs (`--follow`) | Confirming whether a CLI failure is client-side or server-side | Visual UI verification |
+| Adding tasks from local dirs | Reading a router/service to spot silent filters or unhandled errors | Creating API keys |
+| Downloading artifacts | Sanity-checking response shapes before reporting a bug | Managing team settings |
 
-**When to fall back to REST API:** If any CLI command returns "Not Found", "Method Not Allowed", or "No compute providers available", the server API may have changed. Use the OpenAPI spec (`/openapi.json`) to find correct endpoints and call them directly with `curl`.
+**If a CLI command appears missing, broken, or returns unexpected output:** investigate (run `--help`, re-read this skill, read the relevant router/service under `api/transformerlab/`), then tell the user what you found. **Don't** silently fall back to `curl` against the REST API or `/openapi.json` — that's the workaround pattern this skill explicitly forbids.
 
 ## Deep-Dive References
 

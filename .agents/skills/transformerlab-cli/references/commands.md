@@ -268,9 +268,30 @@ Add a new compute provider. Interactive prompts by default.
 | `--name <name>` | Provider name |
 | `--type <type>` | Provider type: `slurm`, `skypilot`, `runpod`, `local` |
 | `--config <json>` | Config as JSON string |
-| `--interactive` / `--no-interactive` | Toggle prompts. Non-interactive requires `--name` and `--type`; `--config` also required unless `--type local`. |
+| `--interactive` / `--no-interactive` | Toggle prompts. Non-interactive requires `--name`, `--type`, AND `--config` (pass `'{}'` for `local`). |
 
 **Always use `--no-interactive` with `--name`, `--type`, and `--config` in automated workflows.**
+
+#### Per-type config schema
+
+The shape of `--config` depends on `--type`:
+
+| Type | Config keys |
+|---|---|
+| `local` | (none — pass `{}`) |
+| `skypilot` | `server_url`, `api_token` |
+| `slurm` | `mode` (`ssh` or `rest`); for `ssh`: `ssh_host`, `ssh_user`, `ssh_key_path`, `ssh_port`; for `rest`: `rest_url`, `api_token` |
+| `runpod` | `api_key` (required), `api_base_url`, `default_gpu_type`, `default_region`, `default_template_id`, `default_network_volume_id` |
+
+```bash
+lab provider add --no-interactive --name local --type local --config '{}'
+lab provider add --no-interactive --name sky1 --type skypilot \
+  --config '{"server_url": "https://sky.example.com", "api_token": "TOKEN"}'
+lab provider add --no-interactive --name slurm-ssh --type slurm \
+  --config '{"mode": "ssh", "ssh_host": "cluster.example.com", "ssh_user": "ali", "ssh_key_path": "~/.ssh/id_rsa", "ssh_port": "22"}'
+lab provider add --no-interactive --name rp1 --type runpod \
+  --config '{"api_key": "KEY", "default_gpu_type": "NVIDIA H100"}'
+```
 
 ### `provider update <provider_id>`
 
@@ -288,7 +309,7 @@ Delete a compute provider.
 
 | Option | Description |
 |---|---|
-| `--yes` / `-y` | Skip confirmation prompt. **Always use in automated workflows.** |
+| `--no-interactive` | Skip confirmation prompt. **Always use in automated workflows.** Note: `provider delete` uses `--no-interactive`, NOT `--yes`/`-y` (which is what `model delete` and `dataset delete` use). |
 
 ### `provider check <provider_id>`
 
@@ -347,6 +368,32 @@ Delete a model group and all its versions.
 | Option | Description |
 |---|---|
 | `--yes` / `-y` | Skip confirmation prompt. **Always use in automated workflows.** |
+
+### `model upload <model_id> <paths...>`
+
+Upload local files or directories to a model on the server. Creates the model if it does not exist. The `model_id` is the identifier used in subsequent `lab model` commands.
+
+| Option | Description |
+|---|---|
+| `--force` | Overwrite files that already exist on the server. |
+
+```bash
+lab model upload my-model ./path/to/model-dir
+lab model upload my-model ./tokenizer.json ./config.json
+lab model upload my-model ./path --force
+```
+
+The server runs a finalize step at the end of `upload` and requires a `config.json` at the root with at least an `architectures` field (`architectures[0]` is recorded as the model architecture). Without it, finalize fails with `cannot finalize: no config.json present. Upload one first.`
+
+Re-running `upload` against the same `model_id` skips files that already exist on the server and exits with code 2 (skipped some, did not fail). Use `--force` to overwrite.
+
+### `model download <model_id> <dest>`
+
+Download every file in a model's directory on the server to `<dest>/<model_id>/`. The destination directory is created if missing.
+
+```bash
+lab model download my-model ./local-models
+```
 
 ---
 
