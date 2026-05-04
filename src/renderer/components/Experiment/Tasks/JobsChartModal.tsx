@@ -12,7 +12,12 @@ interface ChartPoint {
   x: Date;
   y: number;
   jobId: string;
+  isBest: boolean;
 }
+
+const BEST_COLOR = '#22c55e';
+const BEST_BORDER = '#15803d';
+const POINT_COLOR = '#3b82f6';
 
 function extractScore(job: any): number | null {
   const raw = job?.job_data?.score;
@@ -43,25 +48,93 @@ export default function JobsChartModal({
 }: JobsChartModalProps) {
   const points = useMemo<ChartPoint[]>(() => {
     if (!Array.isArray(jobs)) return [];
-    return jobs
+    const sorted = jobs
       .map((job) => {
         const score = extractScore(job);
         const date = extractDate(job);
         if (score === null || date === null) return null;
-        return { x: date, y: score, jobId: String(job?.id ?? '') };
+        return {
+          x: date,
+          y: score,
+          jobId: String(job?.id ?? ''),
+          isBest: false,
+        };
       })
       .filter((p): p is ChartPoint => p !== null)
       .sort((a, b) => a.x.getTime() - b.x.getTime());
+
+    let runningMax = -Infinity;
+    for (const p of sorted) {
+      if (p.y > runningMax) {
+        p.isBest = true;
+        runningMax = p.y;
+      }
+    }
+    return sorted;
   }, [jobs]);
 
-  const chartData = useMemo(
-    () => [
-      {
-        id: 'jobs',
-        data: points.map((p) => ({ x: p.x, y: p.y, jobId: p.jobId })),
-      },
-    ],
-    [points],
+  const chartData = useMemo(() => {
+    const allData = points.map((p) => ({
+      x: p.x,
+      y: p.y,
+      jobId: p.jobId,
+      isBest: p.isBest,
+    }));
+    const bestData = points
+      .filter((p) => p.isBest)
+      .map((p) => ({ x: p.x, y: p.y, jobId: p.jobId, isBest: true }));
+    return [
+      { id: 'jobs', data: allData },
+      { id: 'best', data: bestData },
+    ];
+  }, [points]);
+
+  // Custom layer: stepped line connecting the running-max points.
+  const BestStepLine = ({ series, xScale, yScale }: any) => {
+    const best = series.find((s: any) => s.id === 'best');
+    if (!best || best.data.length < 2) return null;
+    const pts = best.data.map((d: any) => ({
+      x: xScale(d.data.x),
+      y: yScale(d.data.y),
+    }));
+    let path = `M ${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      path += ` L ${pts[i].x},${pts[i - 1].y} L ${pts[i].x},${pts[i].y}`;
+    }
+    return (
+      <path
+        d={path}
+        stroke={BEST_COLOR}
+        strokeWidth={2}
+        fill="none"
+        strokeLinejoin="miter"
+      />
+    );
+  };
+
+  // Custom layer: render points ourselves so we can size/color
+  // best-so-far points differently from regular points.
+  const CustomPoints = ({ series, xScale, yScale }: any) => (
+    <g>
+      {series.flatMap((s: any) =>
+        s.id === 'jobs'
+          ? s.data.map((d: any, i: number) => {
+              const isBest = !!d.data.isBest;
+              return (
+                <circle
+                  key={`pt-${i}`}
+                  cx={xScale(d.data.x)}
+                  cy={yScale(d.data.y)}
+                  r={isBest ? 7 : 4}
+                  fill={isBest ? BEST_COLOR : POINT_COLOR}
+                  stroke={isBest ? BEST_BORDER : 'none'}
+                  strokeWidth={isBest ? 1.5 : 0}
+                />
+              );
+            })
+          : [],
+      )}
+    </g>
   );
 
   return (
@@ -74,7 +147,7 @@ export default function JobsChartModal({
         <Typography level="body-sm" sx={{ mb: 2, color: 'text.tertiary' }}>
           {points.length === 0
             ? 'No jobs with a score and date to plot'
-            : `Score over time across ${points.length} job${points.length === 1 ? '' : 's'}`}
+            : `Score over time across ${points.length} job${points.length === 1 ? '' : 's'} — green marks the best score so far`}
         </Typography>
         <Box
           sx={{
@@ -98,7 +171,7 @@ export default function JobsChartModal({
                 stacked: false,
               }}
               axisBottom={{
-                format: '%b %d',
+                format: '%b %d %H:%M',
                 tickRotation: -30,
                 legend: 'Date',
                 legendOffset: 50,
@@ -111,15 +184,22 @@ export default function JobsChartModal({
               }}
               enableGridX={false}
               enableGridY
-              colors={{ scheme: 'category10' }}
+              colors={[POINT_COLOR, BEST_COLOR]}
               lineWidth={0}
-              pointSize={10}
-              pointBorderWidth={1}
-              pointBorderColor={{ from: 'serieColor' }}
+              enablePoints={false}
+              layers={[
+                'grid',
+                'axes',
+                BestStepLine,
+                CustomPoints,
+                'mesh',
+                'crosshair',
+              ]}
               useMesh
               tooltip={({ point }) => {
                 const jobId = (point.data as any).jobId as string;
                 const shortId = jobId ? jobId.slice(0, 8) : '';
+                const isBest = !!(point.data as any).isBest;
                 return (
                   <Box
                     sx={{
@@ -133,6 +213,11 @@ export default function JobsChartModal({
                   >
                     <div>
                       <b>{shortId}</b>
+                      {isBest && (
+                        <span style={{ color: BEST_BORDER, marginLeft: 6 }}>
+                          best so far
+                        </span>
+                      )}
                     </div>
                     <div>Score: {String(point.data.yFormatted)}</div>
                     <div>{String(point.data.xFormatted)}</div>
