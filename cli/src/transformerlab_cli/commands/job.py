@@ -905,11 +905,14 @@ def command_job_discard(
     except Exception:
         detail = response.text
     if cli_state.output_format == "json":
-        print(json.dumps({"error": "Failed to update discard flag", "status_code": response.status_code, "detail": detail}))
+        print(
+            json.dumps(
+                {"error": "Failed to update discard flag", "status_code": response.status_code, "detail": detail}
+            )
+        )
     else:
         console.print(
-            f"[error]Error:[/error] Failed to update discard flag for job {job_id}. "
-            f"Status code: {response.status_code}"
+            f"[error]Error:[/error] Failed to update discard flag for job {job_id}. Status code: {response.status_code}"
         )
         if detail:
             console.print(f"[error]Detail:[/error] {detail}")

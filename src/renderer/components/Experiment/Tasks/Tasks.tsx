@@ -683,7 +683,9 @@ export default function Tasks({ subtype }: { subtype?: string }) {
     } catch (error) {
       console.error('Error toggling discard:', error);
       updateJobDataOptimistic(jobId, 'score', {
-        ...(typeof currentScore === 'object' && currentScore ? currentScore : {}),
+        ...(typeof currentScore === 'object' && currentScore
+          ? currentScore
+          : {}),
         discard: currentValue,
       });
     }
