@@ -446,18 +446,24 @@ def list_jobs(
         jobs = [j for j in jobs if j.get("status") in ACTIVE_JOB_STATUSES]
 
     if score_metric:
-        # Sort by score metric (e.g. "eval/loss"). Missing/non-numeric scores go to the end.
-        def _sort_key(job):
-            score = job.get("job_data", {}).get("score", {})
-            val = score.get(score_metric) if isinstance(score, dict) else None
-            if val is None:
-                return (1, 0.0)  # push to end
-            try:
-                return (0, float(val))
-            except (ValueError, TypeError):
-                return (1, 0.0)
+        # Sort by score metric (e.g. "eval/loss").
+        # Jobs with missing/non-numeric values are always appended at the end.
+        scored_jobs: list[tuple[dict, float]] = []
+        missing_score_jobs: list[dict] = []
 
-        jobs = sorted(jobs, key=_sort_key, reverse=score_order == "desc")
+        for job in jobs:
+            score = job.get("job_data", {}).get("score", {})
+            raw_val = score.get(score_metric) if isinstance(score, dict) else None
+            if raw_val is None:
+                missing_score_jobs.append(job)
+                continue
+            try:
+                scored_jobs.append((job, float(raw_val)))
+            except (ValueError, TypeError):
+                missing_score_jobs.append(job)
+
+        scored_jobs = sorted(scored_jobs, key=lambda item: item[1], reverse=score_order == "desc")
+        jobs = [job for job, _ in scored_jobs] + missing_score_jobs
 
     if output_format == "json":
         jobs = [{**job, "discarded": _is_discarded(job.get("job_data", {}))} for job in jobs]
