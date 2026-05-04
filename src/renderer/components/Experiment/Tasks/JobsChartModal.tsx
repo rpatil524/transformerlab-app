@@ -397,7 +397,7 @@ export default function JobsChartModal({
 
   const subtitle =
     points.length === 0
-      ? 'No jobs with a date to plot'
+      ? 'No jobs with a date + score to plot. Create jobs and record scores for them to appear here.'
       : [
           primaryMetric
             ? `Metric: ${primaryMetric} — green marks best so far (${lowerIsBetter ? 'lower' : 'higher'} is better)`
@@ -576,7 +576,7 @@ export default function JobsChartModal({
               }}
             >
               <Typography level="body-sm" sx={{ color: 'text.tertiary' }}>
-                No jobs with a date to plot
+                No jobs with a date + score to plot. Create jobs and record scores for them to appear here.
               </Typography>
             </Box>
           )}
