@@ -27,6 +27,7 @@ There are two variants available:
 1. Navigate to the `Train` tab.
 2. Click on the `New` button.
 3. In the pop-up, complete the following sections:
+
    - **Template/Task Name:**  
      Set a unique name for your training template/task.
 
@@ -36,6 +37,7 @@ There are two variants available:
 
    - **Data Template Tab:**  
      There are three fields to configure:
+
      - **Instruction Field:**  
        Provide the instruction prompt. For example:
 
@@ -59,6 +61,7 @@ There are two variants available:
      Configure the training parameters. The fields vary based on the selected plugin:
 
      **For GRPO trainer (Multi GPU):**
+
      - **Training Device:**  
        Set to either `cuda`, `cpu` or `tpu`.
      - **GPU IDs to train:**  
@@ -99,6 +102,7 @@ There are two variants available:
        Unique identifier for the training adaptor.
 
      **For Unsloth GRPO Trainer:**
+
      - _All fields listed above are included except the "Training Device" and "GPU IDs to train"._
      - **Additional Fields:**
        - **LoRA R:**  
