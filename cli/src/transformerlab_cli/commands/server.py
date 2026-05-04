@@ -989,7 +989,7 @@ def server_stop(
 @app.command("start")
 def server_start(
     port: int = typer.Option(8338, "--port", help="Port to start the server on"),
-    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in the foreground instead of background"),
+    foreground: bool = typer.Option(False, "--foreground", help="Run in the foreground instead of background"),
 ) -> None:
     """Start the Transformer Lab server."""
     existing = _find_server_pids(port)
