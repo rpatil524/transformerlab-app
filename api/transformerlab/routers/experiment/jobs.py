@@ -138,13 +138,30 @@ async def job_update_job_data(job_id: str, experimentId: str, body: dict = Body(
 
     # Keep discard under job_data.score.discard to avoid introducing a new top-level field.
     if "discard" in filtered:
-        discard_value = bool(filtered.pop("discard"))
-        existing_job = await job_service.job_get_cached(job_id, experiment_id=experimentId)
-        existing_job_data = (existing_job or {}).get("job_data", {}) if isinstance(existing_job, dict) else {}
-        existing_score = existing_job_data.get("score", {}) if isinstance(existing_job_data, dict) else {}
-        merged_score = dict(existing_score) if isinstance(existing_score, dict) else {}
-        merged_score["discard"] = discard_value
-        filtered["score"] = merged_score
+        raw_discard_value = filtered.pop("discard")
+        if isinstance(raw_discard_value, bool):
+            discard_value = raw_discard_value
+        elif isinstance(raw_discard_value, int):
+            if raw_discard_value not in (0, 1):
+                raise HTTPException(status_code=422, detail="discard must be a boolean value")
+            discard_value = bool(raw_discard_value)
+        elif isinstance(raw_discard_value, str):
+            normalized_discard_value = raw_discard_value.strip().lower()
+            if normalized_discard_value in {"true", "false"}:
+                discard_value = normalized_discard_value == "true"
+            elif normalized_discard_value:
+                try:
+                    numeric_discard_value = int(normalized_discard_value)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail="discard must be a boolean value") from exc
+                if numeric_discard_value not in (0, 1):
+                    raise HTTPException(status_code=422, detail="discard must be a boolean value")
+                discard_value = bool(numeric_discard_value)
+            else:
+                raise HTTPException(status_code=422, detail="discard must be a boolean value")
+        else:
+            raise HTTPException(status_code=422, detail="discard must be a boolean value")
+        await job_service.job_update_job_data_score_field(job_id, "discard", discard_value, experimentId)
 
     if not filtered:
         return {"message": "No valid keys to update"}
