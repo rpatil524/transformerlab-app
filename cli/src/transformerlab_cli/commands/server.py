@@ -1031,9 +1031,7 @@ def server_start(
         # we only catch the case where run.sh exits before the server is even up.
         time.sleep(1)
         if proc.poll() is not None:
-            console.print(
-                f"[error]Error:[/error] Server failed to start (run.sh exited with code {proc.returncode})."
-            )
+            console.print(f"[error]Error:[/error] Server failed to start (run.sh exited with code {proc.returncode}).")
             console.print(f"[dim]Check logs: {log_path}[/dim]")
             raise typer.Exit(1)
 
@@ -1078,8 +1076,7 @@ def server_restart(
         still_running = _find_server_pids(port)
         if still_running:
             console.print(
-                f"[error]Error:[/error] Could not stop processes on port {port}: {still_running}. "
-                "Aborting restart."
+                f"[error]Error:[/error] Could not stop processes on port {port}: {still_running}. Aborting restart."
             )
             raise typer.Exit(1)
 
