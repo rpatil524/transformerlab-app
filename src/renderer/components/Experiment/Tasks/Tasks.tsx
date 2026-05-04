@@ -574,7 +574,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
       const response = await fetchWithAuth(
         chatAPI.Endpoints.Jobs.Delete(experimentInfo.id, jobId),
         {
-          method: 'GET',
+          method: 'DELETE',
         },
       );
 
@@ -660,6 +660,41 @@ export default function Tasks({ subtype }: { subtype?: string }) {
       console.error('Error toggling hidden:', error);
       // Revert on failure
       updateJobDataOptimistic(jobId, 'hidden', currentValue);
+    }
+  };
+
+  const handleToggleDiscard = async (jobId: string, currentValue: boolean) => {
+    if (!experimentInfo?.id) return;
+    const newValue = !currentValue;
+    const currentJob = jobsWithPlaceholders.find(
+      (job: any) => String(job?.id) === String(jobId),
+    );
+    const currentScore =
+      currentJob?.job_data && typeof currentJob.job_data === 'object'
+        ? currentJob.job_data.score
+        : {};
+    const nextScore = {
+      ...(typeof currentScore === 'object' && currentScore ? currentScore : {}),
+      discard: newValue,
+    };
+    updateJobDataOptimistic(jobId, 'score', nextScore);
+    try {
+      await fetchWithAuth(
+        chatAPI.Endpoints.Jobs.UpdateJobData(experimentInfo.id, jobId),
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: { discard: newValue } }),
+        },
+      );
+    } catch (error) {
+      console.error('Error toggling discard:', error);
+      updateJobDataOptimistic(jobId, 'score', {
+        ...(typeof currentScore === 'object' && currentScore
+          ? currentScore
+          : {}),
+        discard: currentValue,
+      });
     }
   };
 
@@ -1508,6 +1543,7 @@ export default function Tasks({ subtype }: { subtype?: string }) {
             }}
             onToggleFavorite={handleToggleFavorite}
             onToggleHidden={handleToggleHidden}
+            onToggleDiscard={handleToggleDiscard}
             showFilesButton={false}
             forceArtifactsButtonVisible
             onStopPendingChange={handleStopPendingChange}
