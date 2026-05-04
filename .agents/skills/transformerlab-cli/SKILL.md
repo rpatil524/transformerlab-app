@@ -544,6 +544,25 @@ lab task queue abc123 -m "train model"
 
 Don't restate the task name, full hyperparameter dict, or file paths — those are already on the job record. Don't copy the user's last message verbatim — synthesize. If the conversation is truly empty of signal, fall back to `"Rerun of <id>, no changes"`.
 
+### Overriding task parameters per queue: `--param key=value`
+
+`lab task queue` accepts repeatable `--param key=value` (alias `-p`) to override values from the task's `parameters:` block for a single job, without mutating `task.yaml`. Values are parsed as YAML scalars: `score=0.42` is a float, `enabled=true` is a bool, `tag=baseline` is a string. Unknown keys (not declared in the task's `parameters:`) fail hard so typos are caught at queue time.
+
+```bash
+# Sweep the same task with different hyperparameters
+for i in $(seq 1 10); do
+  lab task queue TASK_ID --no-interactive \
+    --param description="iteration $i" \
+    --param score=$(python -c "print(0.4 + 0.04*$i)") \
+    -m "Iteration $i"
+done
+
+# Quoting tip: values may contain '=' (split on first '=' only)
+lab task queue TASK_ID --no-interactive --param notes="key=value pairs OK"
+```
+
+Use this instead of `lab task edit --from-file` between queue calls — editing the task affects already-queued-but-not-yet-dispatched jobs and is racy.
+
 ### Selecting a provider when queuing a task
 
 `lab task queue` has no `--provider` flag. With `--no-interactive` it picks the default (usually Local). To pick a specific provider, drive the interactive prompts via stdin. The flow is:
@@ -633,7 +652,7 @@ This applies to launching jobs, fetching logs, checking cluster status, and ever
 | `lab task edit <id>` | Edit an existing task's `task.yaml` (`--from-file`, `--no-interactive`, `--timeout`) | Yes |
 | `lab task upload <id> <path>` | Upload files/directories into an existing task (`--no-interactive`) | Yes |
 | `lab task delete <id>` | Delete a task (`--no-interactive` to skip confirmation) | Yes |
-| `lab task queue <id>` | Queue task on compute provider (`-m/--description` for a markdown run note; required for agents, see "Always write a run description") | Yes |
+| `lab task queue <id>` | Queue task on compute provider (`-m/--description` for a markdown run note; `-p/--param key=value` to override task parameters per run; required for agents, see "Always write a run description") | Yes |
 | `lab task gallery` | Browse/import from task gallery | Yes |
 | `lab job list` | List jobs (`--running` for active only) | Yes |
 | `lab job info <id>` | Get detailed job information | Yes |
