@@ -427,7 +427,12 @@ def _render_job(job) -> None:
     console.print(panel)
 
 
-def list_jobs(experiment_id: str, running_only: bool = False, sort_by: str | None = None):
+def list_jobs(
+    experiment_id: str,
+    running_only: bool = False,
+    score_metric: str | None = None,
+    score_order: str = "desc",
+):
     """List all jobs for a specific experiment."""
     output_format = cli_state.output_format
     jobs = []
@@ -440,11 +445,11 @@ def list_jobs(experiment_id: str, running_only: bool = False, sort_by: str | Non
     if running_only:
         jobs = [j for j in jobs if j.get("status") in ACTIVE_JOB_STATUSES]
 
-    if sort_by:
-        # Sort by a score key (e.g. "eval/loss"). Jobs without the key go to the end.
+    if score_metric:
+        # Sort by score metric (e.g. "eval/loss"). Missing/non-numeric scores go to the end.
         def _sort_key(job):
             score = job.get("job_data", {}).get("score", {})
-            val = score.get(sort_by) if isinstance(score, dict) else None
+            val = score.get(score_metric) if isinstance(score, dict) else None
             if val is None:
                 return (1, 0.0)  # push to end
             try:
@@ -452,7 +457,7 @@ def list_jobs(experiment_id: str, running_only: bool = False, sort_by: str | Non
             except (ValueError, TypeError):
                 return (1, 0.0)
 
-        jobs = sorted(jobs, key=_sort_key)
+        jobs = sorted(jobs, key=_sort_key, reverse=score_order == "desc")
 
     if output_format == "json":
         jobs = [{**job, "discarded": _is_discarded(job.get("job_data", {}))} for job in jobs]
@@ -952,13 +957,30 @@ def command_job_list(
     running: bool = typer.Option(
         False, "--running", help="Show only active jobs (WAITING, LAUNCHING, RUNNING, INTERACTIVE)"
     ),
-    sort_by: str = typer.Option(
-        None, "--sort-by", help="Sort jobs by a score metric key (e.g. 'eval/loss'). Ascending order."
+    score_metric: str = typer.Option(
+        None,
+        "--score-metric",
+        "--sort-by",
+        help="Sort jobs by this score metric key (e.g. 'eval/loss').",
+    ),
+    score_order: str = typer.Option(
+        "desc",
+        "--score-order",
+        help="Score ordering direction: desc (default) or asc.",
     ),
 ):
     """List all jobs."""
+    score_order_normalized = score_order.strip().lower()
+    if score_order_normalized not in {"desc", "asc"}:
+        console.print("[error]Error:[/error] --score-order must be either 'desc' or 'asc'.")
+        raise typer.Exit(1)
     current_experiment = require_current_experiment()
-    list_jobs(current_experiment, running_only=running, sort_by=sort_by)
+    list_jobs(
+        current_experiment,
+        running_only=running,
+        score_metric=score_metric,
+        score_order=score_order_normalized,
+    )
 
 
 @app.command("info")

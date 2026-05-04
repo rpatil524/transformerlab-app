@@ -239,18 +239,33 @@ def test_job_info_pretty_shows_score_without_discard(_mock_require, _mock_api):
 @patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
 @patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
 @patch("transformerlab_cli.commands.job.check_configs")
-def test_job_list_sort_by_metric(_mock_check, _mock_require, _mock_api):
-    """Test that --sort-by sorts jobs by a score metric key in ascending order."""
-    result = runner.invoke(app, ["--format", "json", "job", "list", "--sort-by", "eval/loss"])
+def test_job_list_sort_by_metric_desc_default(_mock_check, _mock_require, _mock_api):
+    """Test that score sorting defaults to descending and missing metric jobs are last."""
+    result = runner.invoke(app, ["--format", "json", "job", "list", "--score-metric", "eval/loss"])
     assert result.exit_code == 0
     data = json.loads(result.output.strip())
-    # Job 2 (eval/loss=2.1) should come before Job 4 (eval/loss=3.5),
+    # Job 4 (eval/loss=3.5) should come before Job 2 (eval/loss=2.1),
     # and jobs without the metric should be at the end.
     ids = [j["id"] for j in data]
-    assert ids.index(2) < ids.index(4)
+    assert ids.index(4) < ids.index(2)
     # Jobs without eval/loss (1, 3, 5) should be after jobs with it
     assert ids.index(2) < ids.index(1)
     assert ids.index(4) < ids.index(1)
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.check_configs")
+def test_job_list_sort_by_metric_asc(_mock_check, _mock_require, _mock_api):
+    """Test that score sorting can be switched to ascending."""
+    result = runner.invoke(
+        app,
+        ["--format", "json", "job", "list", "--score-metric", "eval/loss", "--score-order", "asc"],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    ids = [j["id"] for j in data]
+    assert ids.index(2) < ids.index(4)
 
 
 # ---------------------------------------------------------------------------
