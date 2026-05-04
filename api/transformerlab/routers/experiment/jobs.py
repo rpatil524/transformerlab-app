@@ -131,10 +131,21 @@ async def job_delete(job_id: str, experimentId: str):
 
 @router.put("/{job_id}/job_data")
 async def job_update_job_data(job_id: str, experimentId: str, body: dict = Body(...)):
-    """Update user-facing metadata fields in job_data (favorite, hidden, tags)."""
+    """Update user-facing metadata fields in job_data (favorite, hidden, tags, discard)."""
     updates = body.get("updates", {})
-    ALLOWED_KEYS = {"favorite", "hidden", "tags"}
-    filtered = {k: v for k, v in updates.items() if k in ALLOWED_KEYS}
+    allowed_keys = {"favorite", "hidden", "tags", "discard"}
+    filtered = {k: v for k, v in updates.items() if k in allowed_keys}
+
+    # Keep discard under job_data.score.discard to avoid introducing a new top-level field.
+    if "discard" in filtered:
+        discard_value = bool(filtered.pop("discard"))
+        existing_job = await job_service.job_get_cached(job_id, experiment_id=experimentId)
+        existing_job_data = (existing_job or {}).get("job_data", {}) if isinstance(existing_job, dict) else {}
+        existing_score = existing_job_data.get("score", {}) if isinstance(existing_job_data, dict) else {}
+        merged_score = dict(existing_score) if isinstance(existing_score, dict) else {}
+        merged_score["discard"] = discard_value
+        filtered["score"] = merged_score
+
     if not filtered:
         return {"message": "No valid keys to update"}
     await job_service.job_update_job_data_insert_key_values(job_id, filtered, experimentId)

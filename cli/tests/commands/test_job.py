@@ -29,7 +29,7 @@ SAMPLE_JOBS = [
             "task_name": "eval",
             "completion_status": "SUCCESS",
             "description": "Eval on test split",
-            "score": {"eval/loss": 2.1, "accuracy": 0.95},
+            "score": {"eval/loss": 2.1, "accuracy": 0.95, "discard": True},
             "start_time": "2026-04-24 10:00:00",
             "end_time": "2026-04-24 10:05:30",
         },
@@ -213,6 +213,16 @@ def test_job_list_shows_score(_mock_check, _mock_require, _mock_api):
 
 @patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
 @patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_job_info_pretty_shows_discarded(_mock_require, _mock_api):
+    """job info pretty output should include discarded status."""
+    result = runner.invoke(app, ["job", "info", "2"])
+    assert result.exit_code == 0
+    out = strip_ansi(result.output)
+    assert "discarded" in out.lower()
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
 @patch("transformerlab_cli.commands.job.check_configs")
 def test_job_list_sort_by_metric(_mock_check, _mock_require, _mock_api):
     """Test that --sort-by sorts jobs by a score metric key in ascending order."""
@@ -257,6 +267,19 @@ def test_job_info_json_output(_mock_require, _mock_api):
     assert data["id"] == 1
     assert data["status"] == "RUNNING"
     assert data["files"] == [{"name": "out.log", "is_dir": False, "size": 42}]
+    assert data["discarded"] is False
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+@patch("transformerlab_cli.commands.job.check_configs")
+def test_job_list_json_output_includes_discarded(_mock_check, _mock_require, _mock_api):
+    """job list --format json should include explicit discarded flag per job."""
+    result = runner.invoke(app, ["--format", "json", "job", "list"])
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    assert isinstance(data, list)
+    assert all("discarded" in job for job in data)
 
 
 @patch(
@@ -543,6 +566,41 @@ def test_deprecated_logs_still_works(_mock_require, _mock_fetch):
     result = runner.invoke(app, ["job", "logs", "42"])
     assert result.exit_code == 0
     assert "line1" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Discard command tests
+# ---------------------------------------------------------------------------
+
+
+@patch("transformerlab_cli.commands.job.api.put")
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_job_discard_sets_discard_true(_mock_require, mock_put):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_put.return_value = mock_resp
+
+    result = runner.invoke(app, ["job", "discard", "42"])
+    assert result.exit_code == 0
+    mock_put.assert_called_once_with(
+        "/experiment/exp1/jobs/42/job_data",
+        json={"updates": {"discard": True}},
+    )
+
+
+@patch("transformerlab_cli.commands.job.api.put")
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_job_discard_undo_sets_discard_false(_mock_require, mock_put):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_put.return_value = mock_resp
+
+    result = runner.invoke(app, ["job", "discard", "42", "--undo"])
+    assert result.exit_code == 0
+    mock_put.assert_called_once_with(
+        "/experiment/exp1/jobs/42/job_data",
+        json={"updates": {"discard": False}},
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import {
   EyeOffIcon,
   EyeIcon,
   LinkIcon,
+  BanIcon,
 } from 'lucide-react';
 import { Typography } from '@mui/joy';
 import {
@@ -63,6 +64,7 @@ interface JobsListProps {
   onToggleJobSelected?: (jobId: string) => void;
   onToggleFavorite?: (jobId: string, currentValue: boolean) => void;
   onToggleHidden?: (jobId: string, currentValue: boolean) => void;
+  onToggleDiscard?: (jobId: string, currentValue: boolean) => void;
   hideJobId?: boolean;
   showInteractiveType?: boolean;
   showFilesButton?: boolean;
@@ -92,6 +94,7 @@ const JobsList: React.FC<JobsListProps> = ({
   onToggleJobSelected,
   onToggleFavorite,
   onToggleHidden,
+  onToggleDiscard,
   hideJobId = false,
   showInteractiveType = false,
   showFilesButton = true,
@@ -604,6 +607,24 @@ const JobsList: React.FC<JobsListProps> = ({
                             ) : (
                               <>
                                 <EyeOffIcon size={16} /> Hide
+                              </>
+                            )}
+                          </MenuItem>
+                          <MenuItem
+                            onClick={() =>
+                              onToggleDiscard?.(
+                                String(job.id),
+                                !!job?.job_data?.score?.discard,
+                              )
+                            }
+                          >
+                            {job?.job_data?.score?.discard ? (
+                              <>
+                                <BanIcon size={16} /> Unmark discard
+                              </>
+                            ) : (
+                              <>
+                                <BanIcon size={16} /> Mark discard
                               </>
                             )}
                           </MenuItem>

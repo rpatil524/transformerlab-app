@@ -259,6 +259,16 @@ def _format_score(score: dict) -> str:
     return text
 
 
+def _is_discarded(job_data: dict) -> bool:
+    """Return whether a job is marked discarded via score.discard."""
+    if not isinstance(job_data, dict):
+        return False
+    score = job_data.get("score", {})
+    if not isinstance(score, dict):
+        return False
+    return bool(score.get("discard", False))
+
+
 def _render_jobs(jobs) -> Table:
     """Make a new table."""
     # Create a table to display job details
@@ -279,13 +289,16 @@ def _render_jobs(jobs) -> Table:
         # Truncate long descriptions for the table view
         if description and len(description) > 40:
             description = description[:37] + "…"
+        completion_status = str(job_data.get("completion_status", "N/A"))
+        if _is_discarded(job_data):
+            completion_status = f"{completion_status} (discarded)"
         table.add_row(
             str(job.get("id", "N/A")),
             job.get("experiment_id", "N/A"),
             job_data.get("task_name", "N/A"),
             job.get("status", "N/A"),
             f"{job.get('progress', 0)}%",
-            job_data.get("completion_status", "N/A"),
+            completion_status,
             description or "",
             _format_score(job_data.get("score", {})),
             _compute_duration(job_data),
@@ -364,6 +377,7 @@ def _render_job(job) -> None:
         "End Time": job_data.get("end_time", "N/A"),
         "Duration": _compute_duration(job_data) or "N/A",
         "Completion Status": job_data.get("completion_status", "N/A"),
+        "Discarded": "Yes" if _is_discarded(job_data) else "No",
         "Completion Details": job_data.get("completion_details", "N/A"),
         "Error": job_data.get("error_msg", ""),
         "Config": job_data.get("_config", {}),
@@ -413,6 +427,7 @@ def list_jobs(experiment_id: str, running_only: bool = False, sort_by: str | Non
         jobs = sorted(jobs, key=_sort_key)
 
     if output_format == "json":
+        jobs = [{**job, "discarded": _is_discarded(job.get("job_data", {}))} for job in jobs]
         print(json.dumps(jobs))
     else:
         table = _render_jobs(jobs)
@@ -439,7 +454,7 @@ def info_job(job_id: str, experiment_id: str):
 
     if output_format == "json":
         files = _fetch_job_files(experiment_id, job_id)
-        print(json.dumps({**job, "files": files}))
+        print(json.dumps({**job, "files": files, "discarded": _is_discarded(job.get("job_data", {}))}))
         return
 
     console.print(f"[bold success]Job Details for ID {job_id}:[/bold success]")
@@ -861,6 +876,44 @@ def command_job_logs(
 ):
     """Deprecated: use 'machine-logs' instead."""
     command_job_machine_logs(job_id, follow)
+
+
+@app.command("discard")
+def command_job_discard(
+    job_id: str = typer.Argument(..., help="Job ID to mark as discarded"),
+    undo: bool = typer.Option(False, "--undo", help="Unset discard and mark the job as not discarded"),
+):
+    """Toggle score.discard on a job."""
+    current_experiment = require_current_experiment()
+    discard_value = not undo
+    response = api.put(
+        f"/experiment/{current_experiment}/jobs/{job_id}/job_data",
+        json={"updates": {"discard": discard_value}},
+    )
+    if response.status_code == 200:
+        if cli_state.output_format == "json":
+            print(json.dumps({"job_id": job_id, "discard": discard_value}))
+            return
+        if discard_value:
+            console.print(f"[success]✓[/success] Job [bold]{job_id}[/bold] marked as discarded.")
+        else:
+            console.print(f"[success]✓[/success] Job [bold]{job_id}[/bold] unmarked as discarded.")
+        return
+
+    try:
+        detail = response.json().get("detail", response.text)
+    except Exception:
+        detail = response.text
+    if cli_state.output_format == "json":
+        print(json.dumps({"error": "Failed to update discard flag", "status_code": response.status_code, "detail": detail}))
+    else:
+        console.print(
+            f"[error]Error:[/error] Failed to update discard flag for job {job_id}. "
+            f"Status code: {response.status_code}"
+        )
+        if detail:
+            console.print(f"[error]Detail:[/error] {detail}")
+    raise typer.Exit(1)
 
 
 @app.command("list")
