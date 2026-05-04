@@ -254,9 +254,7 @@ def _score_items(score) -> list[tuple[str, object]]:
         return []
     if isinstance(score, dict):
         return [
-            (str(key), value)
-            for key, value in score.items()
-            if value is not None and str(key).lower() != "discard"
+            (str(key), value) for key, value in score.items() if value is not None and str(key).lower() != "discard"
         ]
     return [("score", score)]
 
