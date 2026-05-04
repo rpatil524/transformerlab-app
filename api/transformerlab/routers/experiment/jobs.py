@@ -137,12 +137,6 @@ async def _job_delete_handler(job_id: str, experimentId: str) -> dict:
     return {"message": "OK"}
 
 
-@router.get("/delete/{job_id}")
-async def job_delete_get(job_id: str, experimentId: str):
-    """Deprecated: prefer ``DELETE /jobs/{job_id}``."""
-    return await _job_delete_handler(job_id, experimentId)
-
-
 @router.put("/{job_id}/job_data")
 async def job_update_job_data(job_id: str, experimentId: str, body: dict = Body(...)):
     """Update user-facing metadata fields in job_data (favorite, hidden, tags)."""
@@ -195,12 +189,6 @@ async def _job_delete_all_handler(experimentId: str) -> dict:
         logger.exception("Failed to delete all jobs (experiment=%s)", experimentId)
         raise HTTPException(status_code=500, detail=f"Failed to delete all jobs: {e}")
     return {"message": "OK", "deleted": deleted}
-
-
-@router.get("/delete_all")
-async def job_delete_all_get(experimentId: str):
-    """Deprecated: prefer ``DELETE /jobs/delete_all``."""
-    return await _job_delete_all_handler(experimentId)
 
 
 @router.delete("/delete_all")
