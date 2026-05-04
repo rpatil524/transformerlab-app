@@ -95,7 +95,9 @@ const config = {
           customCss: [
             require.resolve('./src/css/vars.css'),
             require.resolve('./src/css/custom.css'),
-            require.resolve('asciinema-player/dist/bundle/asciinema-player.css'),
+            require.resolve(
+              'asciinema-player/dist/bundle/asciinema-player.css',
+            ),
           ],
         },
         ...(process.env.GTAG_TRACKING_ID && {

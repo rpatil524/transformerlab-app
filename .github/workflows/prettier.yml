@@ -22,9 +22,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm install -g prettier
+        run: npm ci
 
       - name: Check Prettier formatting
         run: npm run format:check

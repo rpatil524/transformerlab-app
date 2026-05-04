@@ -29,6 +29,7 @@ Realizing the model's limitations, we sourced a concise synopsis of the TV show 
 <img src={require('./gifs/raw_text/DownloadPlugin.gif').default} alt="Docs Upload Gif" width="500" />
 
 2. **Create a Generation Task:**
+
    - Switch to the **Generator Tab** and click **Create Task**.
    - Select **Generate from Raw Text** from the drop-down menu.
    - A configuration window appears.
