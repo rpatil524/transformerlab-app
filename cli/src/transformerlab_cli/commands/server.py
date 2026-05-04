@@ -1014,6 +1014,8 @@ def server_start(
         result = subprocess.run(cmd, cwd=src_dir)
         raise typer.Exit(result.returncode)
     else:
+        import time
+
         log_path = os.path.join(os.path.expanduser("~"), ".transformerlab", "server.log")
         log_file = open(log_path, "a", encoding="utf-8")
         proc = subprocess.Popen(
@@ -1023,6 +1025,18 @@ def server_start(
             stderr=log_file,
             start_new_session=True,
         )
+
+        # Give the launcher a moment, then verify it didn't die immediately.
+        # We don't wait for uvicorn to bind the port (that can take many seconds);
+        # we only catch the case where run.sh exits before the server is even up.
+        time.sleep(1)
+        if proc.poll() is not None:
+            console.print(
+                f"[error]Error:[/error] Server failed to start (run.sh exited with code {proc.returncode})."
+            )
+            console.print(f"[dim]Check logs: {log_path}[/dim]")
+            raise typer.Exit(1)
+
         console.print(f"[success]✓[/success] Server starting in background (PID {proc.pid}) on port {port}.")
         console.print(f"[dim]Logs: {log_path}[/dim]")
 
