@@ -37,7 +37,10 @@ lab config set server https://your-server-url
 # Step 2: Login with an API key
 lab login --api-key YOUR_API_KEY --server https://your-server-url
 
-# Step 3: Set the current experiment
+# Step 3: Set the current experiment.
+#   Use `lab experiment list` to see existing experiments.
+#   If yours doesn't exist yet, run `lab experiment create your_experiment_name` first.
+#   `lab experiment set-default <id>` is a convenience equivalent to this command.
 lab config set current_experiment your_experiment_name
 
 # Step 4: Verify connectivity
@@ -240,6 +243,54 @@ lab.finish(message="Hello world complete!")
 **Add it:**
 ```bash
 lab task add ./hello-world-task --no-interactive
+```
+
+## Managing Experiments
+
+Use `lab experiment` commands to list, create, delete, and set the default experiment. **Experiments are the container for tasks and jobs** — most `lab task` / `lab job` commands operate against the *current* experiment (the one stored in `~/.lab/config.json` as `current_experiment`).
+
+```bash
+# List all experiments. The current default is marked with `*`.
+lab experiment list
+lab --format json experiment list
+
+# Create a new experiment
+lab experiment create my-experiment
+
+# Create and immediately set as the default
+lab experiment create my-experiment --set-default
+
+# Delete an experiment (`--no-interactive` to skip confirmation)
+lab experiment delete my-experiment --no-interactive
+
+# Switch which experiment is the default. This writes to ~/.lab/config.json.
+lab experiment set-default my-experiment
+```
+
+### `lab experiment set-default` vs `lab config set current_experiment`
+
+Both write the same key (`current_experiment`) to `~/.lab/config.json`. Differences:
+
+- `lab experiment set-default <id>` validates that the experiment exists on the server before writing. Prefer this when scripting — it fails fast on a typo.
+- `lab config set current_experiment <id>` is a raw config write and does not validate. Useful when bootstrapping a config (e.g. before the server is reachable) or when you've already confirmed the experiment exists.
+
+### Finding an experiment ID by name
+
+`lab experiment list` (and the JSON form) is the only sanctioned way to discover experiment IDs. **Do not fall back to `curl /experiment/`** — even when you only have a name and need the ID, this CLI surface covers it:
+
+```bash
+# Get just the ID for a given name
+lab --format json experiment list | jq -r '.experiments[] | select(.name=="my-experiment") | .id'
+```
+
+`lab --format json experiment list` returns:
+```json
+{
+  "current_experiment": "my-experiment",
+  "experiments": [
+    {"id": "my-experiment", "name": "my-experiment", "config": {}}
+  ]
+}
 ```
 
 ## Managing Models
@@ -590,6 +641,10 @@ This applies to launching jobs, fetching logs, checking cluster status, and ever
 | `lab logout` | Remove stored API key | No |
 | `lab whoami` | Show current user and team | No |
 | `lab version` | Show CLI version | No |
+| `lab experiment list` | List all experiments (current default marked with `*`) | No |
+| `lab experiment create <name>` | Create a new experiment (`--set-default` to also switch to it) | No |
+| `lab experiment delete <id>` | Delete an experiment (`--no-interactive` to skip prompt) | No |
+| `lab experiment set-default <id>` | Set the default experiment (validates server-side, then writes `current_experiment` to `~/.lab/config.json`) | No |
 | `lab task list` | List tasks in current experiment | Yes |
 | `lab task info <id>` | Get task details | Yes |
 | `lab task init` | Scaffold `task.yaml` + `main.py` in the current directory (`--interactive` to prompt) | No |
@@ -658,7 +713,7 @@ With non-zero exit code.
 - Commands exit with non-zero status on failure
 - With `--format json`, errors return `{"error": "<message>"}`
 - "config not set" errors → run `lab login` first
-- "current_experiment not set" → run `lab config set current_experiment <id>`
+- "current_experiment not set" → run `lab experiment list` to find an existing experiment, then `lab experiment set-default <id>` (or `lab experiment create <name> --set-default` if none exists)
 - Connection refused → check server URL with `lab config`, verify server is running
 - "No compute providers available" → add a provider in team settings first, or check `provider list`
 
