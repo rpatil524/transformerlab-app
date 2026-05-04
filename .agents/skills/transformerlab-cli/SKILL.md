@@ -505,7 +505,7 @@ Provider configs (`api_token`, `api_key`, `ssh_key_path`) contain secrets. If th
 3. **Use `--format json`** when you need to parse output, but be prepared to fall back to pretty output parsing if it doesn't work
 4. **`--no-interactive` on `task queue` silently uses the DEFAULT provider (Local).** There is no `--provider` flag. To target a specific provider, you must drive the interactive prompts (see "Selecting a provider" below).
 5. **`task add` has no `--yes` flag** — pipe `echo "y"` to confirm: `echo "y" | lab task add ./my-task`
-6. **Skip confirmation on destructive commands:** use `--no-interactive` for `provider delete`, and `--yes` / `-y` for `model delete` / `dataset delete` (the flag names differ — verify with `--help`)
+6. **Skip confirmation on destructive commands:** use `--no-interactive` for `provider delete`, `job delete`, and `job delete-all`; use `--yes` / `-y` for `model delete` / `dataset delete` (the flag names differ — verify with `--help`)
 7. **Never use `job monitor`** — it launches a TUI that blocks; use `job list` + `job task-logs` instead
 8. **Never use `task interactive`** unless the user specifically requests an interactive session
 9. **`job task-logs --follow`** streams continuously and blocks until the job finishes — use when the user wants real-time monitoring
@@ -662,6 +662,8 @@ This applies to launching jobs, fetching logs, checking cluster status, and ever
 | `lab job artifacts <id>` | List job artifacts | Yes |
 | `lab job download <id>` | Download artifacts (`--file` for glob) | Yes |
 | `lab job stop <id>` | Stop a running job | Yes |
+| `lab job delete <id>` | Delete a job (`--no-interactive` to skip prompt) | Yes |
+| `lab job delete-all` | Delete all jobs in the current experiment (`--no-interactive` to skip prompt) | Yes |
 | `lab provider list` | List compute providers | No |
 | `lab provider info <id>` | Show provider details | No |
 | `lab provider add` | Add a new provider | No |
