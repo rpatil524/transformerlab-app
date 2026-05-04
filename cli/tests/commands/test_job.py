@@ -209,6 +209,8 @@ def test_job_list_shows_score(_mock_check, _mock_require, _mock_api):
     assert "eval/" in out
     # Job 1 (no score) should have empty score column — just verify Score header is present
     assert "Score" in out
+    # discard flag should not be shown as a score metric
+    assert "discard" not in out.lower()
 
 
 @patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
@@ -219,6 +221,19 @@ def test_job_info_pretty_shows_discarded(_mock_require, _mock_api):
     assert result.exit_code == 0
     out = strip_ansi(result.output)
     assert "discarded" in out.lower()
+
+
+@patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))
+@patch("transformerlab_cli.commands.job.require_current_experiment", return_value="exp1")
+def test_job_info_pretty_shows_score_without_discard(_mock_require, _mock_api):
+    """job info pretty output should show score metrics and hide score.discard."""
+    result = runner.invoke(app, ["job", "info", "2"])
+    assert result.exit_code == 0
+    out = strip_ansi(result.output)
+    assert "Score:" in out
+    assert "eval/loss" in out
+    assert "accuracy" in out
+    assert "discard: True" not in out
 
 
 @patch("transformerlab_cli.commands.job.api.get", return_value=_mock_api_response(SAMPLE_JOBS))

@@ -248,11 +248,22 @@ def _compute_duration(job_data: dict) -> str:
         return ""
 
 
-def _format_score(score: dict) -> str:
-    """Format a score dict into a compact string for the table view."""
-    if not score or not isinstance(score, dict):
-        return ""
-    parts = [f"{k}={v}" for k, v in score.items() if v is not None]
+def _score_items(score) -> list[tuple[str, object]]:
+    """Normalize score payload to key/value pairs and hide internal flags."""
+    if score is None:
+        return []
+    if isinstance(score, dict):
+        return [
+            (str(key), value)
+            for key, value in score.items()
+            if value is not None and str(key).lower() != "discard"
+        ]
+    return [("score", score)]
+
+
+def _format_score(score) -> str:
+    """Format score payload into a compact string for the table view."""
+    parts = [f"{k}={v}" for k, v in _score_items(score)]
     text = ", ".join(parts)
     if len(text) > 30:
         text = text[:27] + "…"
@@ -390,8 +401,12 @@ def _render_job(job) -> None:
     details["Config"] = f"\n{config_text}"
 
     score = details.pop("Score")
-    score_text = "\n".join([f"  {key}: {value}" for key, value in score.items()])
-    details["Score"] = f"\n{score_text}"
+    score_items = _score_items(score)
+    if score_items:
+        score_text = "\n".join([f"  {key}: {value}" for key, value in score_items])
+        details["Score"] = f"\n{score_text}"
+    else:
+        details["Score"] = "N/A"
 
     # Display details in a panel
     detail_text = "\n".join([f"[bold]{key}:[/bold] {value}" for key, value in details.items()])
