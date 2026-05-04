@@ -73,6 +73,33 @@ interface JobsListProps {
   onStopPendingChange?: (jobId: string, stopPending: boolean) => void;
 }
 
+const parseDiscardValue = (value: unknown): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (value === 0 || value === 1) {
+      return Boolean(value);
+    }
+    return false;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') {
+      return true;
+    }
+    if (normalized === 'false') {
+      return false;
+    }
+    const numeric = Number.parseInt(normalized, 10);
+    if (Number.isNaN(numeric)) {
+      return false;
+    }
+    return numeric === 1;
+  }
+  return false;
+};
+
 const JobsList: React.FC<JobsListProps> = ({
   jobs,
   launchProgressByJobId,
@@ -701,11 +728,15 @@ const JobsList: React.FC<JobsListProps> = ({
                             onClick={() =>
                               onToggleDiscard?.(
                                 String(job.id),
-                                !!job?.job_data?.score?.discard,
+                                parseDiscardValue(
+                                  job?.job_data?.score?.discard,
+                                ),
                               )
                             }
                           >
-                            {job?.job_data?.score?.discard ? (
+                            {parseDiscardValue(
+                              job?.job_data?.score?.discard,
+                            ) ? (
                               <>
                                 <BanIcon size={16} /> Unmark discard
                               </>

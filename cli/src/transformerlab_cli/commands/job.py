@@ -275,7 +275,22 @@ def _is_discarded(job_data: dict) -> bool:
     score = job_data.get("score", {})
     if not isinstance(score, dict):
         return False
-    return bool(score.get("discard", False))
+    discard = score.get("discard", False)
+    if isinstance(discard, bool):
+        return discard
+    if isinstance(discard, int):
+        return discard == 1
+    if isinstance(discard, str):
+        normalized = discard.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        try:
+            return int(normalized) == 1
+        except ValueError:
+            return False
+    return False
 
 
 def _render_jobs(jobs) -> Table:
