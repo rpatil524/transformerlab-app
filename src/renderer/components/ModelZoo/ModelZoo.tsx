@@ -1,21 +1,11 @@
-/* eslint-disable jsx-a11y/anchor-is-valid */
-import { useEffect } from 'react';
 import Sheet from '@mui/joy/Sheet';
-import { LayersIcon } from 'lucide-react';
-import { Tab, TabList, TabPanel, Tabs } from '@mui/joy';
-import { useNavigate, useParams } from 'react-router-dom';
-import ModelRegistryGrid from './ModelRegistryGrid';
+import { PackageIcon } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import AssetRegistryGrid from '../Registry/AssetRegistryGrid';
 import ModelGroupDetail from './ModelGroupDetail';
 
-export default function ModelZoo({ tab = 'store' }) {
-  const navigate = useNavigate();
+export default function ModelZoo() {
   const { groupId } = useParams<{ groupId?: string }>();
-
-  useEffect(() => {
-    if (tab !== 'registry') {
-      navigate('/zoo/registry', { replace: true });
-    }
-  }, [tab, navigate]);
 
   return (
     <Sheet
@@ -24,45 +14,20 @@ export default function ModelZoo({ tab = 'store' }) {
         height: '100%',
         flexDirection: 'column',
         overflow: 'hidden',
+        p: 2,
       }}
     >
-      <Tabs
-        aria-label="Model Registry tabs"
-        size="sm"
-        sx={{
-          borderRadius: 'lg',
-          display: 'flex',
-          width: '100%',
-          height: '100%',
-          overflow: 'unset',
-        }}
-        value="registry"
-      >
-        <TabList>
-          <Tab value="registry">
-            <LayersIcon size={16} color="grey" />
-            &nbsp; Model Registry
-          </Tab>
-        </TabList>
-        <TabPanel
-          value="registry"
-          sx={{
-            p: 0,
-            py: 1,
-            height: '100%',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            flex: 1,
-          }}
-        >
-          {groupId ? (
-            <ModelGroupDetail groupId={groupId} />
-          ) : (
-            <ModelRegistryGrid />
-          )}
-        </TabPanel>
-      </Tabs>
+      {groupId ? (
+        <ModelGroupDetail groupId={groupId} />
+      ) : (
+        <AssetRegistryGrid
+          assetType="model"
+          detailRoute={(id) => `/zoo/registry/${id}`}
+          Icon={PackageIcon}
+          emptyMessage="No model groups yet."
+          emptyHint="Publish a model from a completed Job to create your first model."
+        />
+      )}
     </Sheet>
   );
 }

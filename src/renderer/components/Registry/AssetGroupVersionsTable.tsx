@@ -48,17 +48,24 @@ const TAG_COLORS: Record<
   draft: 'warning',
 };
 
-interface ModelGroupVersionsTableProps {
+interface AssetGroupVersionsTableProps {
   groupId: string;
-  assetType: string;
+  assetType: 'model' | 'dataset';
+  /** Extra columns to show between Tag and Job, rendered per row from metadata. */
+  metadataColumns?: Array<{
+    label: string;
+    width: number;
+    field: string;
+  }>;
   onAfterMutation?: () => void;
 }
 
-export default function ModelGroupVersionsTable({
+export default function AssetGroupVersionsTable({
   groupId,
   assetType,
+  metadataColumns = [],
   onAfterMutation,
-}: ModelGroupVersionsTableProps) {
+}: AssetGroupVersionsTableProps) {
   const [updatingVersion, setUpdatingVersion] = useState<string | null>(null);
   const {
     data: versions,
@@ -119,7 +126,7 @@ export default function ModelGroupVersionsTable({
   const handleDeleteVersion = async (versionLabel: string) => {
     if (
       !window.confirm(
-        `Delete version ${versionLabel} from this group? This will not delete the underlying model.`,
+        `Delete version ${versionLabel} from this group? This will not delete the underlying ${assetType}.`,
       )
     ) {
       return;
@@ -170,8 +177,11 @@ export default function ModelGroupVersionsTable({
         <tr>
           <th style={{ width: 90 }}>Version</th>
           <th style={{ width: 140 }}>Tag</th>
-          <th style={{ width: 140 }}>Architecture</th>
-          <th style={{ width: 80 }}>Params</th>
+          {metadataColumns.map((c) => (
+            <th key={c.field} style={{ width: c.width }}>
+              {c.label}
+            </th>
+          ))}
           <th style={{ width: 80 }}>Job</th>
           <th style={{ width: 110 }}>Created</th>
           <th style={{ width: 60 }}>&nbsp;</th>
@@ -181,7 +191,7 @@ export default function ModelGroupVersionsTable({
         {versionList.map((v) => (
           <tr key={v.id}>
             <td>
-              <Tooltip title={`Model ID: ${v.asset_id}`} placement="right">
+              <Tooltip title={`ID: ${v.asset_id}`} placement="right">
                 <Typography level="title-sm" fontFamily="monospace">
                   {v.version_label}
                 </Typography>
@@ -225,16 +235,13 @@ export default function ModelGroupVersionsTable({
                 </Select>
               )}
             </td>
-            <td>
-              <Typography level="body-sm">
-                {(v.metadata as any)?.architecture || '—'}
-              </Typography>
-            </td>
-            <td>
-              <Typography level="body-sm">
-                {(v.metadata as any)?.parameters || '—'}
-              </Typography>
-            </td>
+            {metadataColumns.map((c) => (
+              <td key={c.field}>
+                <Typography level="body-sm">
+                  {(v.metadata as any)?.[c.field] || '—'}
+                </Typography>
+              </td>
+            ))}
             <td>
               {v.job_id ? (
                 <Tooltip title={`Job ${v.job_id}`}>

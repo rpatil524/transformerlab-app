@@ -1,5 +1,6 @@
-import { Box, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/joy';
-import { PackageIcon, PencilIcon, Trash2Icon } from 'lucide-react';
+import { ComponentType } from 'react';
+import { Box, Chip, Stack, Tooltip, Typography } from '@mui/joy';
+import { LucideProps } from 'lucide-react';
 
 export interface GroupSummary {
   group_id: string;
@@ -21,33 +22,21 @@ const TAG_COLORS: Record<
   draft: 'warning',
 };
 
-interface ModelGroupCardProps {
+interface AssetGroupCardProps {
   group: GroupSummary;
+  Icon: ComponentType<LucideProps>;
   onOpen: (groupId: string) => void;
-  onEdit: (group: GroupSummary) => void;
-  onDelete: (group: GroupSummary) => void;
 }
 
-export default function ModelGroupCard({
+export default function AssetGroupCard({
   group,
+  Icon,
   onOpen,
-  onEdit,
-  onDelete,
-}: ModelGroupCardProps) {
-  const handleEdit = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onEdit(group);
-  };
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onDelete(group);
-  };
-
+}: AssetGroupCardProps) {
   return (
     <Box
       onClick={() => onOpen(group.group_id)}
       sx={{
-        position: 'relative',
         border: '1px solid',
         borderColor: 'divider',
         borderRadius: 'md',
@@ -58,11 +47,10 @@ export default function ModelGroupCard({
           borderColor: 'primary.outlinedBorder',
           background: 'background.level1',
         },
-        '&:hover .ModelGroupCard-actions': { opacity: 1 },
       }}
     >
       <Stack direction="row" alignItems="center" gap={1} sx={{ minWidth: 0 }}>
-        <PackageIcon size={16} style={{ flexShrink: 0 }} />
+        <Icon size={16} style={{ flexShrink: 0 }} />
         <Typography
           level="title-sm"
           fontWeight="lg"
@@ -92,40 +80,6 @@ export default function ModelGroupCard({
           </Typography>
         </Tooltip>
       )}
-
-      <Stack
-        direction="row"
-        gap={0.5}
-        className="ModelGroupCard-actions"
-        sx={{
-          position: 'absolute',
-          top: 6,
-          right: 6,
-          opacity: 0,
-          transition: 'opacity 0.15s ease',
-          background: 'background.surface',
-          borderRadius: 'sm',
-        }}
-      >
-        <IconButton
-          size="sm"
-          variant="plain"
-          color="neutral"
-          onClick={handleEdit}
-          aria-label="Edit model group"
-        >
-          <PencilIcon size={14} />
-        </IconButton>
-        <IconButton
-          size="sm"
-          variant="plain"
-          color="danger"
-          onClick={handleDelete}
-          aria-label="Delete model group"
-        >
-          <Trash2Icon size={14} />
-        </IconButton>
-      </Stack>
     </Box>
   );
 }

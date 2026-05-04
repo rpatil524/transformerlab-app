@@ -35,6 +35,7 @@ import * as chatAPI from '../../lib/transformerlab-api-sdk';
 import { fetcher } from '../../lib/transformerlab-api-sdk';
 import AssetGroupVersionsTable from '../Registry/AssetGroupVersionsTable';
 import { GroupSummary } from '../Registry/AssetGroupCard';
+import DatasetTable from './DatasetTable';
 
 dayjs.extend(relativeTime);
 
@@ -49,11 +50,14 @@ const TAG_COLORS: Record<
 
 interface VersionEntry {
   version_label: string;
+  asset_id: string;
   long_description: string | null;
   description: string | null;
   metadata: Record<string, unknown> | null;
   tag: string | null;
 }
+
+type DatasetTab = 'card' | 'versions' | 'explorer';
 
 function EditGroupModal({
   open,
@@ -74,7 +78,7 @@ function EditGroupModal({
     setSaving(true);
     try {
       await fetchWithAuth(
-        chatAPI.Endpoints.AssetVersions.UpdateGroup('model', group.group_id),
+        chatAPI.Endpoints.AssetVersions.UpdateGroup('dataset', group.group_id),
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -94,7 +98,7 @@ function EditGroupModal({
     <Modal open={open} onClose={onClose}>
       <ModalDialog sx={{ width: 480 }}>
         <ModalClose />
-        <DialogTitle>Edit Model Group</DialogTitle>
+        <DialogTitle>Edit Dataset Group</DialogTitle>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <FormControl>
             <FormLabel>Name</FormLabel>
@@ -106,7 +110,7 @@ function EditGroupModal({
               minRows={3}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe this model group…"
+              placeholder="Describe this dataset group…"
             />
           </FormControl>
           <Button loading={saving} onClick={handleSave}>
@@ -118,23 +122,25 @@ function EditGroupModal({
   );
 }
 
-interface ModelGroupDetailProps {
+interface DatasetGroupDetailProps {
   groupId: string;
 }
 
-export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
+export default function DatasetGroupDetail({
+  groupId,
+}: DatasetGroupDetailProps) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'card' | 'versions'>('card');
+  const [activeTab, setActiveTab] = useState<DatasetTab>('card');
   const [editing, setEditing] = useState(false);
 
   const {
     data: groups,
     isLoading: groupsLoading,
     mutate: mutateGroups,
-  } = useSWR(chatAPI.Endpoints.AssetVersions.ListGroups('model'), fetcher);
+  } = useSWR(chatAPI.Endpoints.AssetVersions.ListGroups('dataset'), fetcher);
 
   const { data: versions, isLoading: versionsLoading } = useSWR(
-    chatAPI.Endpoints.AssetVersions.ListVersions('model', groupId),
+    chatAPI.Endpoints.AssetVersions.ListVersions('dataset', groupId),
     fetcher,
   );
 
@@ -153,17 +159,17 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
     if (!group) return;
     if (
       !window.confirm(
-        `Delete group "${group.group_name}" and ALL its versions? The underlying models will not be deleted.`,
+        `Delete group "${group.group_name}" and ALL its versions? The underlying datasets will not be deleted.`,
       )
     ) {
       return;
     }
     try {
       await fetchWithAuth(
-        chatAPI.Endpoints.AssetVersions.DeleteGroup('model', group.group_id),
+        chatAPI.Endpoints.AssetVersions.DeleteGroup('dataset', group.group_id),
         { method: 'DELETE' },
       );
-      navigate('/zoo/registry');
+      navigate('/data/registry');
     } catch (err) {
       console.error('Failed to delete group:', err);
     }
@@ -183,12 +189,12 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
         <Button
           variant="plain"
           startDecorator={<ChevronLeftIcon size={16} />}
-          onClick={() => navigate('/zoo/registry')}
+          onClick={() => navigate('/data/registry')}
         >
           Registry
         </Button>
         <Typography level="body-lg" color="neutral" sx={{ mt: 2 }}>
-          Model group not found.
+          Dataset group not found.
         </Typography>
       </Box>
     );
@@ -196,11 +202,11 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
 
   const meta = (latestVersion?.metadata as any) || {};
   const metaPills: Array<{ label: string; value: string }> = [];
-  if (meta.architecture) {
-    metaPills.push({ label: 'Architecture', value: String(meta.architecture) });
+  if (meta.format) {
+    metaPills.push({ label: 'Format', value: String(meta.format) });
   }
-  if (meta.parameters) {
-    metaPills.push({ label: 'Params', value: String(meta.parameters) });
+  if (meta.size) {
+    metaPills.push({ label: 'Size', value: String(meta.size) });
   }
   if (meta.license) {
     metaPills.push({ label: 'License', value: String(meta.license) });
@@ -222,14 +228,13 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
         minHeight: 0,
       }}
     >
-      {/* Header */}
       <Box sx={{ pb: 2 }}>
         <Button
           variant="plain"
           color="neutral"
           size="sm"
           startDecorator={<ChevronLeftIcon size={16} />}
-          onClick={() => navigate('/zoo/registry')}
+          onClick={() => navigate('/data/registry')}
           sx={{ ml: -1, mb: 1 }}
         >
           Registry
@@ -270,7 +275,7 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
               variant="plain"
               color="neutral"
               onClick={() => setEditing(true)}
-              aria-label="Edit model group"
+              aria-label="Edit dataset group"
             >
               <PencilIcon size={16} />
             </IconButton>
@@ -279,7 +284,7 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
               variant="plain"
               color="danger"
               onClick={handleDelete}
-              aria-label="Delete model group"
+              aria-label="Delete dataset group"
             >
               <Trash2Icon size={16} />
             </IconButton>
@@ -297,15 +302,15 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
         )}
       </Box>
 
-      {/* Tabs */}
       <Tabs
         value={activeTab}
-        onChange={(_e, val) => setActiveTab(val as 'card' | 'versions')}
+        onChange={(_e, val) => setActiveTab(val as DatasetTab)}
         sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}
       >
         <TabList>
-          <Tab value="card">Model Card</Tab>
+          <Tab value="card">Dataset Card</Tab>
           <Tab value="versions">Versions</Tab>
+          <Tab value="explorer">Dataset Explorer</Tab>
         </TabList>
 
         <TabPanel value="card" sx={{ flex: 1, overflow: 'auto', px: 0, pt: 2 }}>
@@ -317,7 +322,7 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
             </Box>
           ) : (
             <Typography level="body-sm" color="neutral">
-              No model card yet. Add a description with the edit button above,
+              No dataset card yet. Add a description with the edit button above,
               or a version with a long description.
             </Typography>
           )}
@@ -329,13 +334,22 @@ export default function ModelGroupDetail({ groupId }: ModelGroupDetailProps) {
         >
           <AssetGroupVersionsTable
             groupId={group.group_id}
-            assetType="model"
-            metadataColumns={[
-              { label: 'Architecture', width: 140, field: 'architecture' },
-              { label: 'Params', width: 80, field: 'parameters' },
-            ]}
+            assetType="dataset"
             onAfterMutation={mutateGroups}
           />
+        </TabPanel>
+
+        <TabPanel
+          value="explorer"
+          sx={{ flex: 1, overflow: 'auto', px: 0, pt: 2 }}
+        >
+          {latestVersion?.asset_id ? (
+            <DatasetTable datasetId={latestVersion.asset_id} />
+          ) : (
+            <Typography level="body-sm" color="neutral">
+              No dataset version available to preview.
+            </Typography>
+          )}
         </TabPanel>
       </Tabs>
 
