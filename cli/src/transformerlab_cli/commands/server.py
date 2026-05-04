@@ -1060,6 +1060,15 @@ def server_restart(
                         pass
                 time.sleep(0.5)
 
+        # Verify the server is actually stopped before trying to start a new one.
+        still_running = _find_server_pids(port)
+        if still_running:
+            console.print(
+                f"[error]Error:[/error] Could not stop processes on port {port}: {still_running}. "
+                "Aborting restart."
+            )
+            raise typer.Exit(1)
+
         console.print("[success]✓[/success] Server stopped.")
     else:
         console.print(f"[dim]No server running on port {port}.[/dim]")
