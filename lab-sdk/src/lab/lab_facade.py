@@ -638,8 +638,11 @@ class Lab:
         except Exception:
             # Never let optional Trackio integration break finish()
             logger.debug("Trackio integration failed during finish()", exc_info=True)
-        if score is not None:
-            _run_async(self._job.update_job_data_field("score", score))  # type: ignore[union-attr]
+        resolved_score: Dict[str, Any] = {}
+        if isinstance(score, dict):
+            resolved_score.update(score)
+        resolved_score.setdefault("discard", False)
+        _run_async(self._job.update_job_data_field("score", resolved_score))  # type: ignore[union-attr]
         if additional_output_path is not None and additional_output_path.strip() != "":
             _run_async(self._job.update_job_data_field("additional_output_path", additional_output_path))  # type: ignore[union-attr]
         if plot_data_path is not None and plot_data_path.strip() != "":
@@ -647,6 +650,18 @@ class Lab:
 
         # Important: update cached_jobs only when all completion fields are already written.
         _run_async(self._job.update_status(JobStatus.COMPLETE))  # type: ignore[union-attr]
+
+    def download_registry_model(self, model_id: str) -> str:
+        """Download a TLab registry model to ~/tmp/<model_id> and return the local path."""
+        return _run_async(self.async_download_registry_model(model_id))
+
+    async def async_download_registry_model(self, model_id: str) -> str:
+        """Download model from TLab registry storage to ~/tmp/<model_id> and return the local path."""
+        model = await ModelService.get(model_id)
+        remote_dir = await model.get_dir()
+        local_path = os.path.expanduser(f"~/tmp/{model_id}")
+        await storage.copy_dir(remote_dir, local_path)
+        return local_path
 
     def save_artifact(
         self,

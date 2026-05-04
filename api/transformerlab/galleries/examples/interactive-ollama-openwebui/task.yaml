@@ -1,6 +1,6 @@
 name: ollama-open-webui
-github_repo_url: https://github.com/transformerlab/transformerlab-examples
-github_repo_dir: interactive-ollama-openwebui
+github_repo_url: https://github.com/transformerlab/transformerlab-app
+github_repo_dir: api/transformerlab/galleries/examples/interactive-ollama-openwebui
 resources:
   cpus: 2
   memory: 8
@@ -11,7 +11,7 @@ setup: |
   if ! command -v ollama >/dev/null 2>&1; then curl -fsSL https://ollama.com/install.sh | sh; fi
   if [ "$(uname)" != "Darwin" ]; then $SUDO apt-get update && $SUDO apt-get install -y pciutils lshw; fi
 run: |
-  python ~/interactive-ollama-openwebui/run.py
+  python interactive-ollama-openwebui/run.py
 envs:
   PYTHONUNBUFFERED: "1"
 parameters:

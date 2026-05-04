@@ -1,11 +1,11 @@
 name: mnist-train
-github_repo_url: https://github.com/transformerlab/transformerlab-examples
-github_repo_dir: mnist-train
+github_repo_url: https://github.com/transformerlab/transformerlab-app
+github_repo_dir: api/transformerlab/galleries/examples/mnist-train
 resources:
   cpus: 2
   memory: 4
 setup: "uv pip install torch torchvision wandb transformerlab matplotlib"
-run: "python ~/mnist-train/mnist_train.py"
+run: "python mnist-train/mnist_train.py"
 envs:
   WANDB_API_KEY: "{{secret._WANDB_API_KEY}}"
   WANDB_PROJECT: "mnist-training-project"

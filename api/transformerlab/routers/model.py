@@ -1,10 +1,14 @@
 from typing import Annotated
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from huggingface_hub import HfApi
 
-from transformerlab.services import model_service
+from transformerlab.services import model_service, asset_upload_service, asset_download_service
 from transformerlab.services.cache_service import cached
 from transformerlab.services.permission_service import require_permission
+from transformerlab.services.upload_service import (
+    get_assembled_path,
+    delete_upload,
+)
 from lab.dirs import get_workspace_dir
 from lab.model import Model
 from lab import storage
@@ -36,6 +40,45 @@ async def model_local_list():
         print(f"Warning: could not fetch model version groups: {e}")
 
     return models
+
+
+@router.get("/model/registry_versions")
+@cached(key="models:registry_versions", ttl="1h", tags=["models", "models:registry_versions", "asset_versions"])
+async def model_registry_versions():
+    """List model registry versions as selectable model IDs."""
+    from transformerlab.services import asset_version_service
+
+    groups = await asset_version_service.list_groups("model")
+    versions: list[dict] = []
+
+    for group in groups:
+        group_id = group.get("group_id")
+        group_name = group.get("group_name") or group_id
+        if not group_id:
+            continue
+
+        group_versions = await asset_version_service.list_versions("model", group_id)
+        for version in group_versions:
+            model_id = version.get("asset_id")
+            version_label = version.get("version_label")
+            if not model_id or not version_label:
+                continue
+
+            tag = version.get("tag")
+            tag_suffix = f" ({tag})" if tag else ""
+            versions.append(
+                {
+                    "model_id": model_id,
+                    "name": f"{group_name}/{version_label}{tag_suffix}",
+                    "group_id": group_id,
+                    "group_name": group_name,
+                    "version_label": version_label,
+                    "tag": tag,
+                    "created_at": version.get("created_at"),
+                }
+            )
+
+    return versions
 
 
 @router.get("/model/create")
@@ -192,3 +235,103 @@ async def get_pipeline_tag(model_name: str):
         ## Assume text generation if we can't get the tag (this fixes things for local models)
         print(f"Error fetching pipeline tag for {model_name}: {type(e).__name__}: {e}")
         return {"status": "success", "data": "text-generation", "model_id": model_name}
+
+
+@router.post("/model/fileupload", summary="Accept a chunked-upload-staged file as part of a model.")
+async def model_fileupload(
+    model_id: str,
+    upload_id: str,
+    relpath: str,
+    force: bool = False,
+):
+    try:
+        assembled = await get_assembled_path(upload_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    # Lazy-create the Model so the directory + index.json stub exist.
+    try:
+        model_obj = await Model.get(model_id)
+    except FileNotFoundError:
+        model_obj = await Model.create(model_id)
+        await model_obj.set_metadata(model_id=model_id, name=model_id, json_data={"local_model": True})
+
+    asset_dir = await model_obj.get_dir()
+
+    try:
+        await asset_upload_service.accept_uploaded_file(
+            asset_dir=asset_dir,
+            assembled_path=assembled,
+            relpath=relpath,
+            force=force,
+        )
+    except asset_upload_service.InvalidRelpathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except asset_upload_service.RelpathConflictError as exc:
+        raise HTTPException(status_code=409, detail=f"file exists: {exc}")
+
+    # Update json_data.files in index.json so listings stay consistent.
+    metadata = await model_obj.get_metadata()
+    json_data = metadata.get("json_data", {}) or {}
+    files = set(json_data.get("files", []) or [])
+    files.add(relpath.replace("\\", "/"))
+    json_data["files"] = sorted(files)
+    await model_obj.set_metadata(json_data=json_data)
+
+    await delete_upload(upload_id)
+    return {"status": "success", "relpath": relpath}
+
+
+@router.post("/model/finalize", summary="Finalize a model after all files are uploaded.")
+async def model_finalize(model_id: str):
+    try:
+        model_obj = await Model.get(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"model {model_id} not found")
+
+    asset_dir = await model_obj.get_dir()
+    config_path = storage.join(asset_dir, "config.json")
+    if not await storage.exists(config_path):
+        raise HTTPException(
+            status_code=400,
+            detail="cannot finalize: no config.json present. Upload one first.",
+        )
+
+    architecture = await model_obj.detect_architecture(asset_dir)
+    metadata = await model_obj.get_metadata()
+    json_data = metadata.get("json_data", {}) or {}
+    json_data["architecture"] = architecture
+    json_data["local_model"] = True
+    json_data.setdefault("source", "transformerlab")
+    await model_obj.set_metadata(name=metadata.get("name", model_id), json_data=json_data)
+
+    return {"status": "success", "architecture": architecture}
+
+
+@router.get("/model/files", summary="List all files within a model directory.")
+async def model_files(model_id: str):
+    try:
+        model_obj = await Model.get(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"model {model_id} not found")
+    asset_dir = await model_obj.get_dir()
+    return await asset_download_service.list_files(asset_dir)
+
+
+@router.get("/model/file", summary="Stream one file from a model directory.")
+async def model_file(
+    model_id: str,
+    relpath: str,
+    range: str | None = Header(default=None),  # noqa: A002 — shadows builtin; FastAPI injects Range header
+):
+    try:
+        model_obj = await Model.get(model_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"model {model_id} not found")
+    asset_dir = await model_obj.get_dir()
+    try:
+        return await asset_download_service.stream_file(asset_dir, relpath, range)
+    except asset_download_service.InvalidRelpathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"{relpath} not found in model {model_id}")

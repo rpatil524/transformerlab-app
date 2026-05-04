@@ -27,6 +27,12 @@ interface LaunchProgressInfo {
   message?: string;
 }
 
+type ConfigField = {
+  field_name: string;
+  env_var: string;
+  field_type: 'str' | 'integer' | 'model';
+};
+
 interface InteractiveJobCardProps {
   job: any;
   /** Live launch progress from check-status polling; falls back to job.job_data.launch_progress in JobProgress */
@@ -131,6 +137,7 @@ export default function InteractiveJobCard({
     name?: string;
     icon?: string;
     interactive_type?: string;
+    env_parameters?: ConfigField[];
   };
 
   const [connectOpen, setConnectOpen] = useState(false);
@@ -151,8 +158,8 @@ export default function InteractiveJobCard({
   const TypeIcon = typeConfig?.icon;
 
   // Resolve a richer display name/icon from the interactive gallery entry.
-  // This avoids hard-coding per-interactive-type UI logic and lets new gallery
-  // entries render correctly even if `interactive_type` is missing.
+  // Entry lookup is by gallery id first; interactive type is used as the shared
+  // display type key.
   const interactiveGalleryUrl =
     experimentInfo?.id && (interactiveGalleryId || interactiveType)
       ? chatAPI.Endpoints.Task.InteractiveGallery(experimentInfo.id)
@@ -171,9 +178,24 @@ export default function InteractiveJobCard({
       ? galleryEntries.find((e) => e?.id === interactiveGalleryId)
       : null) ||
     (interactiveType
-      ? galleryEntries.find((e) => e?.interactive_type === interactiveType) ||
-        galleryEntries.find((e) => e?.id === interactiveType)
+      ? galleryEntries.find((e) => e?.interactive_type === interactiveType)
       : null);
+  const envVars =
+    typeof jobData?.env_vars === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(jobData.env_vars) as Record<string, string>;
+          } catch {
+            return {};
+          }
+        })()
+      : ((jobData?.env_vars as Record<string, string> | undefined) ?? {});
+  const modelField = galleryEntry?.env_parameters?.find(
+    (field) => field?.field_type === 'model',
+  );
+  const modelName = modelField?.env_var
+    ? envVars[modelField.env_var]
+    : envVars.MODEL_NAME || jobData?.model_name || null;
 
   let boxBg = 'var(--joy-palette-neutral-softBg)';
   let boxColor = 'var(--joy-palette-neutral-softColor)';
@@ -295,7 +317,11 @@ export default function InteractiveJobCard({
             >
               {title}
             </Typography>
-            <Stack direction="row" spacing={0.75} sx={{ minWidth: 0 }}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ minWidth: 0, flexWrap: 'wrap', rowGap: 0.5 }}
+            >
               <Chip
                 variant="soft"
                 color={chipColor}
@@ -316,6 +342,17 @@ export default function InteractiveJobCard({
               >
                 {providerName ?? 'Not specified'}
               </Chip>
+              {isInteractive && modelName?.trim() && (
+                <Chip
+                  variant="soft"
+                  color="primary"
+                  size="sm"
+                  sx={{ minWidth: 0, maxWidth: '100%' }}
+                  title={`Model: ${modelName}`}
+                >
+                  {`Model: ${modelName}`}
+                </Chip>
+              )}
             </Stack>
           </Stack>
           {showDeleteAction && (

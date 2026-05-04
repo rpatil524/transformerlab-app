@@ -107,29 +107,40 @@ lab --format json task queue TASK_ID --no-interactive
 
 ## 5. Provider Management
 
-Add, configure, and monitor compute providers.
+Add, configure, and monitor compute providers. **Always run `lab provider list` first** — most servers ship with a `local` provider already configured, and adding a new one only makes sense when the user explicitly asks or when an existing provider can't satisfy the requested resources.
 
 ```bash
-# List current providers
+# 1. List current providers (defaults to active only)
 lab --format json provider list
+lab --format json provider list --include-disabled
 
-# Add a new provider (non-interactive)
-lab --format json provider add --name my-slurm --type slurm --config '{"host": "cluster.example.com", "user": "admin"}' --no-interactive
+# 2. Add a new provider (non-interactive — see SKILL.md "Managing Providers"
+#    for the per-type config schema). Examples:
 
-# Check provider health
+# SkyPilot
+lab --format json provider add --no-interactive --name my-skypilot --type skypilot \
+  --config '{"server_url": "https://sky.example.com", "api_token": "TOKEN"}'
+
+# Slurm over SSH
+lab --format json provider add --no-interactive --name my-slurm --type slurm \
+  --config '{"mode": "ssh", "ssh_host": "cluster.example.com", "ssh_user": "admin", "ssh_key_path": "~/.ssh/id_rsa", "ssh_port": "22"}'
+
+# RunPod
+lab --format json provider add --no-interactive --name my-runpod --type runpod \
+  --config '{"api_key": "RUNPOD_KEY", "default_gpu_type": "NVIDIA H100"}'
+
+# 3. Health-check immediately after creating
 lab --format json provider check PROVIDER_ID
 
-# Disable a provider temporarily
+# 4. Toggle without deleting
 lab provider disable PROVIDER_ID
-
-# Re-enable it
 lab provider enable PROVIDER_ID
 
-# Update provider config (merges with existing)
-lab --format json provider update PROVIDER_ID --config '{"partition": "gpu"}'
+# 5. Update fields (config is MERGED — pass only changed keys)
+lab --format json provider update PROVIDER_ID --config '{"api_token": "NEW_TOKEN"}'
 
-# Delete a provider
-lab provider delete PROVIDER_ID --yes
+# 6. Delete (note: --no-interactive, NOT --yes)
+lab provider delete PROVIDER_ID --no-interactive
 ```
 
 ---
@@ -197,4 +208,87 @@ lab --format json provider check PROVIDER_ID
 
 # List any running jobs
 lab --format json job list --running
+```
+
+---
+
+## 8. Model Management
+
+List, create, inspect, and delete models on the server.
+
+```bash
+# List all model groups
+lab --format json model list
+
+# Inspect a specific model
+lab --format json model info GROUP_ID
+
+# Create a new model group from a HuggingFace model ID
+lab --format json model create meta-llama/Llama-2-7b --name "Llama 2 7B" --description "Base model for fine-tuning"
+
+# Edit model metadata
+lab model edit GROUP_ID --name "Updated Name" --description "New description"
+
+# Delete a model group
+lab model delete GROUP_ID --yes
+```
+
+---
+
+## 9. Dataset Management
+
+Upload, download, and manage datasets.
+
+```bash
+# List all datasets
+lab --format json dataset list
+
+# Download a dataset from HuggingFace Hub
+lab dataset download Trelis/touch-rugby-rules
+
+# Upload local files to a dataset (creates if needed)
+lab dataset upload my-eval-set eval.jsonl
+
+# Inspect a dataset
+lab --format json dataset info GROUP_ID
+
+# Edit dataset metadata
+lab dataset edit GROUP_ID --description "Cleaned eval set v2"
+
+# Delete a dataset group
+lab dataset delete GROUP_ID --yes
+```
+
+---
+
+## 10. Full Training Lifecycle: Dataset → Task → Job → Publish
+
+End-to-end workflow: prepare data, train, and publish results.
+
+```bash
+# 1. Ensure the dataset exists on the server
+lab --format json dataset list
+# If not present, download or upload it
+lab dataset download user/my-dataset
+# or: lab dataset upload my-dataset train.jsonl eval.jsonl
+
+# 2. Create or add a task that references the dataset
+lab task init
+# Edit task.yaml to add dataset_id in parameters, then:
+lab --format json task add ./my-training-task
+
+# 3. Queue the task
+lab --format json task queue TASK_ID --no-interactive -m "Fine-tuning on my-dataset with lr=3e-5"
+
+# 4. Monitor
+lab job task-logs JOB_ID --follow
+
+# 5. Check completion
+lab --format json job info JOB_ID
+
+# 6. Publish the trained model to the registry
+lab --format json job publish model JOB_ID MODEL_NAME --group "my-model" --mode new --tag latest --description "Fine-tuned on my-dataset"
+
+# 7. Publish any output datasets (e.g. generated eval results)
+lab --format json job publish dataset JOB_ID DATASET_NAME --group "my-eval-results" --mode new --tag latest
 ```

@@ -2,6 +2,7 @@ import io
 import json
 import os
 import zipfile
+from datetime import datetime
 from fnmatch import fnmatch
 from urllib.parse import quote, urlencode, urlparse
 
@@ -28,6 +29,39 @@ app = typer.Typer()
 publish_app = typer.Typer()
 
 ACTIVE_JOB_STATUSES = {"RUNNING", "LAUNCHING", "INTERACTIVE", "WAITING"}
+
+
+def _extract_provider_cluster_from_job(job: dict) -> tuple[str | None, str | None]:
+    """Extract provider_id and cluster_name from a job payload."""
+    if not isinstance(job, dict):
+        return None, None
+    job_data = job.get("job_data", {})
+    if not isinstance(job_data, dict):
+        return None, None
+    provider_id = job_data.get("provider_id")
+    cluster_name = job_data.get("cluster_name")
+    if not provider_id or not cluster_name:
+        return None, None
+    return str(provider_id), str(cluster_name)
+
+
+def _stop_provider_cluster(experiment_id: str, job_id: str) -> None:
+    """Best-effort provider cluster stop to mirror GUI behavior."""
+    job_response = api.get(f"/experiment/{experiment_id}/jobs/{job_id}")
+    if job_response.status_code != 200:
+        return
+
+    provider_id, cluster_name = _extract_provider_cluster_from_job(job_response.json())
+    if not provider_id or not cluster_name:
+        return
+
+    cluster_stop_url = f"/compute_provider/providers/{provider_id}/clusters/{cluster_name}/stop?job_id={job_id}"
+    cluster_response = api.post(cluster_stop_url)
+    if cluster_response.status_code >= 400:
+        console.print(
+            f"[warning]Warning:[/warning] Job stop requested, but cluster stop request failed "
+            f"(status {cluster_response.status_code})."
+        )
 
 
 def _publish_job_asset(
@@ -187,6 +221,78 @@ def _fetch_all_jobs(experiment_id: str) -> list[dict]:
         return []
 
 
+def _compute_duration(job_data: dict) -> str:
+    """Compute human-readable duration from start_time and end_time in job_data."""
+    start = job_data.get("start_time")
+    end = job_data.get("end_time")
+    if not start:
+        return ""
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+        if end:
+            end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+        else:
+            end_dt = datetime.utcnow()
+        delta = end_dt - start_dt
+        total_secs = int(delta.total_seconds())
+        if total_secs < 0:
+            return ""
+        if total_secs < 60:
+            return f"{total_secs}s"
+        if total_secs < 3600:
+            return f"{total_secs // 60}m {total_secs % 60}s"
+        hours = total_secs // 3600
+        mins = (total_secs % 3600) // 60
+        return f"{hours}h {mins}m"
+    except (ValueError, TypeError):
+        return ""
+
+
+def _score_items(score) -> list[tuple[str, object]]:
+    """Normalize score payload to key/value pairs and hide internal flags."""
+    if score is None:
+        return []
+    if isinstance(score, dict):
+        return [
+            (str(key), value) for key, value in score.items() if value is not None and str(key).lower() != "discard"
+        ]
+    return [("score", score)]
+
+
+def _format_score(score) -> str:
+    """Format score payload into a compact string for the table view."""
+    parts = [f"{k}={v}" for k, v in _score_items(score)]
+    text = ", ".join(parts)
+    if len(text) > 30:
+        text = text[:27] + "…"
+    return text
+
+
+def _is_discarded(job_data: dict) -> bool:
+    """Return whether a job is marked discarded via score.discard."""
+    if not isinstance(job_data, dict):
+        return False
+    score = job_data.get("score", {})
+    if not isinstance(score, dict):
+        return False
+    discard = score.get("discard", False)
+    if isinstance(discard, bool):
+        return discard
+    if isinstance(discard, int):
+        return discard == 1
+    if isinstance(discard, str):
+        normalized = discard.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        try:
+            return int(normalized) == 1
+        except ValueError:
+            return False
+    return False
+
+
 def _render_jobs(jobs) -> Table:
     """Make a new table."""
     # Create a table to display job details
@@ -197,16 +303,29 @@ def _render_jobs(jobs) -> Table:
     table.add_column("Status", style="yellow")
     table.add_column("Progress", justify="right", style="blue")
     table.add_column("Completion Status", style="red")
+    table.add_column("Description", style="dim", max_width=40)
+    table.add_column("Score", style="dim", max_width=32)
+    table.add_column("Duration", justify="right", style="dim", no_wrap=True)
 
     for job in jobs:
         job_data = job.get("job_data", {})
+        description = job_data.get("description", "")
+        # Truncate long descriptions for the table view
+        if description and len(description) > 40:
+            description = description[:37] + "…"
+        completion_status = str(job_data.get("completion_status", "N/A"))
+        if _is_discarded(job_data):
+            completion_status = f"{completion_status} (discarded)"
         table.add_row(
             str(job.get("id", "N/A")),
             job.get("experiment_id", "N/A"),
             job_data.get("task_name", "N/A"),
             job.get("status", "N/A"),
             f"{job.get('progress', 0)}%",
-            job_data.get("completion_status", "N/A"),
+            completion_status,
+            description or "",
+            _format_score(job_data.get("score", {})),
+            _compute_duration(job_data),
         )
 
     return table
@@ -278,7 +397,11 @@ def _render_job(job) -> None:
         "Generated Datasets": job_data.get("generated_datasets", []),
         "Evaluation Results": "\n".join(job_data.get("eval_results", [])),
         "Artifacts": _render_artifacts(job_data.get("artifacts", [])),
+        "Start Time": job_data.get("start_time", "N/A"),
+        "End Time": job_data.get("end_time", "N/A"),
+        "Duration": _compute_duration(job_data) or "N/A",
         "Completion Status": job_data.get("completion_status", "N/A"),
+        "Discarded": "Yes" if _is_discarded(job_data) else "No",
         "Completion Details": job_data.get("completion_details", "N/A"),
         "Error": job_data.get("error_msg", ""),
         "Config": job_data.get("_config", {}),
@@ -291,8 +414,12 @@ def _render_job(job) -> None:
     details["Config"] = f"\n{config_text}"
 
     score = details.pop("Score")
-    score_text = "\n".join([f"  {key}: {value}" for key, value in score.items()])
-    details["Score"] = f"\n{score_text}"
+    score_items = _score_items(score)
+    if score_items:
+        score_text = "\n".join([f"  {key}: {value}" for key, value in score_items])
+        details["Score"] = f"\n{score_text}"
+    else:
+        details["Score"] = "N/A"
 
     # Display details in a panel
     detail_text = "\n".join([f"[bold]{key}:[/bold] {value}" for key, value in details.items()])
@@ -300,7 +427,12 @@ def _render_job(job) -> None:
     console.print(panel)
 
 
-def list_jobs(experiment_id: str, running_only: bool = False):
+def list_jobs(
+    experiment_id: str,
+    running_only: bool = False,
+    score_metric: str | None = None,
+    score_order: str = "desc",
+):
     """List all jobs for a specific experiment."""
     output_format = cli_state.output_format
     jobs = []
@@ -313,7 +445,28 @@ def list_jobs(experiment_id: str, running_only: bool = False):
     if running_only:
         jobs = [j for j in jobs if j.get("status") in ACTIVE_JOB_STATUSES]
 
+    if score_metric:
+        # Sort by score metric (e.g. "eval/loss").
+        # Jobs with missing/non-numeric values are always appended at the end.
+        scored_jobs: list[tuple[dict, float]] = []
+        missing_score_jobs: list[dict] = []
+
+        for job in jobs:
+            score = job.get("job_data", {}).get("score", {})
+            raw_val = score.get(score_metric) if isinstance(score, dict) else None
+            if raw_val is None:
+                missing_score_jobs.append(job)
+                continue
+            try:
+                scored_jobs.append((job, float(raw_val)))
+            except (ValueError, TypeError):
+                missing_score_jobs.append(job)
+
+        scored_jobs = sorted(scored_jobs, key=lambda item: item[1], reverse=score_order == "desc")
+        jobs = [job for job, _ in scored_jobs] + missing_score_jobs
+
     if output_format == "json":
+        jobs = [{**job, "discarded": _is_discarded(job.get("job_data", {}))} for job in jobs]
         print(json.dumps(jobs))
     else:
         table = _render_jobs(jobs)
@@ -322,38 +475,50 @@ def list_jobs(experiment_id: str, running_only: bool = False):
 
 def info_job(job_id: str, experiment_id: str):
     """Get details of a specific job."""
-    jobs = []
-    with console.status("[bold success]Fetching jobs[/bold success]", spinner="dots"):
+    output_format = cli_state.output_format
+    if output_format == "json":
         jobs = _fetch_all_jobs(experiment_id)
+    else:
+        with console.status("[bold success]Fetching jobs[/bold success]", spinner="dots"):
+            jobs = _fetch_all_jobs(experiment_id)
 
     # filter the job with the given job_id
     job = next((job for job in jobs if str(job.get("id")) == job_id), None)
-    if job:
-        console.print(f"[bold success]Job Details for ID {job_id}:[/bold success]")
-        _render_job(job)
-
-        # Fetch and display job files
-        with console.status("[bold success]Fetching job files[/bold success]", spinner="dots"):
-            files = _fetch_job_files(experiment_id, job_id)
-        if files:
-            file_table = Table(title="Files", show_header=True, header_style="bold")
-            file_table.add_column("Name")
-            file_table.add_column("Type", width=6)
-            file_table.add_column("Size", justify="right")
-            for f in files:
-                name = f.get("name", "")
-                is_dir = f.get("is_dir", False)
-                size = f.get("size", 0)
-                file_table.add_row(
-                    name,
-                    "dir" if is_dir else "file",
-                    "" if is_dir else _format_size(size),
-                )
-            console.print(file_table)
-        else:
-            console.print("[dim]No files found in job directory.[/dim]")
-    else:
+    if not job:
+        if output_format == "json":
+            print(json.dumps({"error": f"Job with ID {job_id} not found."}))
+            return
         console.print(f"[error]Error:[/error] Job with ID {job_id} not found.")
+        return
+
+    if output_format == "json":
+        files = _fetch_job_files(experiment_id, job_id)
+        print(json.dumps({**job, "files": files, "discarded": _is_discarded(job.get("job_data", {}))}))
+        return
+
+    console.print(f"[bold success]Job Details for ID {job_id}:[/bold success]")
+    _render_job(job)
+
+    # Fetch and display job files
+    with console.status("[bold success]Fetching job files[/bold success]", spinner="dots"):
+        files = _fetch_job_files(experiment_id, job_id)
+    if files:
+        file_table = Table(title="Files", show_header=True, header_style="bold")
+        file_table.add_column("Name")
+        file_table.add_column("Type", width=6)
+        file_table.add_column("Size", justify="right")
+        for f in files:
+            name = f.get("name", "")
+            is_dir = f.get("is_dir", False)
+            size = f.get("size", 0)
+            file_table.add_row(
+                name,
+                "dir" if is_dir else "file",
+                "" if is_dir else _format_size(size),
+            )
+        console.print(file_table)
+    else:
+        console.print("[dim]No files found in job directory.[/dim]")
 
 
 def list_artifacts(job_id: str, experiment_id: str, output_format: str = "pretty") -> list[dict]:
@@ -568,7 +733,7 @@ def fetch_logs(experiment_id: str, job_id: str):
 
 def fetch_task_logs(experiment_id: str, job_id: str):
     """Fetch task (Lab SDK) output for a job."""
-    return api.get(f"/experiment/{experiment_id}/jobs/{job_id}/stream_output", timeout=15.0)
+    return api.get(f"/experiment/{experiment_id}/jobs/{job_id}/task_logs", timeout=15.0)
 
 
 def fetch_request_logs(experiment_id: str, job_id: str):
@@ -649,16 +814,48 @@ def _print_logs(experiment_id: str, job_id: str, output_format: str, fetch_fn, l
         response = fetch_fn(experiment_id, job_id)
 
     if response.status_code != 200:
+        detail = ""
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = str(payload.get("detail") or payload.get("message") or "")
+        except Exception:
+            detail = ""
+
         if output_format == "json":
-            print(json.dumps({"error": f"Failed to fetch {label}. Status code: {response.status_code}"}))
+            body = {"error": f"Failed to fetch {label}. Status code: {response.status_code}"}
+            if detail:
+                body["detail"] = detail
+            print(json.dumps(body))
         else:
             console.print(f"[red]Error:[/red] Failed to fetch {label}. Status code: {response.status_code}")
+            if detail:
+                console.print(f"[red]Detail:[/red] {detail}")
         raise typer.Exit(1)
 
     data = response.json()
     logs_text = data.get("logs", "") if isinstance(data, dict) else ""
+    wait_message = data.get("message", "") if isinstance(data, dict) else ""
+    retryable = bool(data.get("retryable")) if isinstance(data, dict) else False
 
     if not logs_text or "No log files found" in logs_text:
+        if wait_message and retryable:
+            if output_format == "json":
+                print(
+                    json.dumps(
+                        {
+                            "job_id": job_id,
+                            "logs": logs_text,
+                            "line_count": 0,
+                            "message": wait_message,
+                            "retryable": True,
+                            "retry_after_seconds": data.get("retry_after_seconds"),
+                        }
+                    )
+                )
+            else:
+                console.print(f"[yellow]{wait_message}[/yellow]")
+            return
         exit_with_no_results(output_format, f"No {label} found for this job")
 
     if output_format == "json":
@@ -720,15 +917,76 @@ def command_job_logs(
     command_job_machine_logs(job_id, follow)
 
 
+@app.command("discard")
+def command_job_discard(
+    job_id: str = typer.Argument(..., help="Job ID to mark as discarded"),
+    undo: bool = typer.Option(False, "--undo", help="Unset discard and mark the job as not discarded"),
+):
+    """Toggle score.discard on a job."""
+    current_experiment = require_current_experiment()
+    discard_value = not undo
+    response = api.put(
+        f"/experiment/{current_experiment}/jobs/{job_id}/job_data",
+        json={"updates": {"discard": discard_value}},
+    )
+    if response.status_code == 200:
+        if cli_state.output_format == "json":
+            print(json.dumps({"job_id": job_id, "discard": discard_value}))
+            return
+        if discard_value:
+            console.print(f"[success]✓[/success] Job [bold]{job_id}[/bold] marked as discarded.")
+        else:
+            console.print(f"[success]✓[/success] Job [bold]{job_id}[/bold] unmarked as discarded.")
+        return
+
+    try:
+        detail = response.json().get("detail", response.text)
+    except Exception:
+        detail = response.text
+    if cli_state.output_format == "json":
+        print(
+            json.dumps(
+                {"error": "Failed to update discard flag", "status_code": response.status_code, "detail": detail}
+            )
+        )
+    else:
+        console.print(
+            f"[error]Error:[/error] Failed to update discard flag for job {job_id}. Status code: {response.status_code}"
+        )
+        if detail:
+            console.print(f"[error]Detail:[/error] {detail}")
+    raise typer.Exit(1)
+
+
 @app.command("list")
 def command_job_list(
     running: bool = typer.Option(
         False, "--running", help="Show only active jobs (WAITING, LAUNCHING, RUNNING, INTERACTIVE)"
     ),
+    score_metric: str = typer.Option(
+        None,
+        "--score-metric",
+        "--sort-by",
+        help="Sort jobs by this score metric key (e.g. 'eval/loss').",
+    ),
+    score_order: str = typer.Option(
+        "desc",
+        "--score-order",
+        help="Score ordering direction: desc (default) or asc.",
+    ),
 ):
     """List all jobs."""
+    score_order_normalized = score_order.strip().lower()
+    if score_order_normalized not in {"desc", "asc"}:
+        console.print("[error]Error:[/error] --score-order must be either 'desc' or 'asc'.")
+        raise typer.Exit(1)
     current_experiment = require_current_experiment()
-    list_jobs(current_experiment, running_only=running)
+    list_jobs(
+        current_experiment,
+        running_only=running,
+        score_metric=score_metric,
+        score_order=score_order_normalized,
+    )
 
 
 @app.command("info")
@@ -751,6 +1009,7 @@ def command_job_stop(
         response = api.get(f"/experiment/{current_experiment}/jobs/{job_id}/stop")
 
     if response.status_code == 200:
+        _stop_provider_cluster(current_experiment, job_id)
         console.print(f"[success]✓[/success] Job [bold]{job_id}[/bold] stopped.")
     else:
         console.print(f"[error]Error:[/error] Failed to stop job. Status code: {response.status_code}")
@@ -760,6 +1019,111 @@ def command_job_stop(
         except (ValueError, KeyError):
             console.print(f"[error]Response:[/error] {response.text}")
         raise typer.Exit(1)
+
+
+def _extract_error_detail(response) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            return str(payload.get("detail") or payload.get("message") or response.text or "")
+    except Exception:
+        pass
+    return response.text or ""
+
+
+@app.command("delete")
+def command_job_delete(
+    job_id: str = typer.Argument(..., help="Job ID to delete"),
+    no_interactive: bool = typer.Option(False, "--no-interactive", help="Skip confirmation prompt"),
+):
+    """Delete a job."""
+    check_configs(output_format=cli_state.output_format)
+    current_experiment = require_current_experiment()
+    output_format = cli_state.output_format
+
+    if not no_interactive:
+        typer.confirm(f"Delete job {job_id}?", abort=True)
+
+    if output_format != "json":
+        with console.status(f"[bold success]Deleting job {job_id}...[/bold success]", spinner="dots"):
+            response = api.delete(f"/experiment/{current_experiment}/jobs/{job_id}")
+    else:
+        response = api.delete(f"/experiment/{current_experiment}/jobs/{job_id}")
+
+    if response.status_code == 200:
+        if output_format == "json":
+            print(json.dumps({"deleted": job_id}))
+        else:
+            console.print(f"[success]✓[/success] Job [bold]{job_id}[/bold] deleted.")
+        return
+
+    detail = _extract_error_detail(response)
+
+    if response.status_code == 404:
+        if output_format == "json":
+            print(json.dumps({"error": f"Job {job_id} not found", "status_code": 404}))
+        else:
+            console.print(f"[error]Error:[/error] Job {job_id} not found.")
+        raise typer.Exit(1)
+
+    if output_format == "json":
+        print(json.dumps({"error": detail or "Failed to delete job", "status_code": response.status_code}))
+    else:
+        console.print(f"[error]Error:[/error] Failed to delete job. Status code: {response.status_code}")
+        if detail:
+            console.print(f"[error]Detail:[/error] {detail}")
+    raise typer.Exit(1)
+
+
+@app.command("delete-all")
+def command_job_delete_all(
+    no_interactive: bool = typer.Option(False, "--no-interactive", help="Skip confirmation prompt"),
+):
+    """Delete all jobs in the current experiment."""
+    check_configs(output_format=cli_state.output_format)
+    current_experiment = require_current_experiment()
+    output_format = cli_state.output_format
+
+    list_response = api.get(f"/experiment/{current_experiment}/jobs/list")
+    existing_count = len(list_response.json()) if list_response.status_code == 200 else 0
+
+    if not no_interactive:
+        typer.confirm(
+            f"Delete all jobs in experiment '{current_experiment}' ({existing_count} jobs)?",
+            abort=True,
+        )
+
+    if output_format != "json":
+        with console.status(
+            f"[bold success]Deleting all jobs in experiment {current_experiment}...[/bold success]",
+            spinner="dots",
+        ):
+            response = api.delete(f"/experiment/{current_experiment}/jobs/delete_all")
+    else:
+        response = api.delete(f"/experiment/{current_experiment}/jobs/delete_all")
+
+    if response.status_code == 200:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        deleted_count = existing_count
+        if isinstance(payload, dict) and isinstance(payload.get("deleted"), int):
+            deleted_count = payload["deleted"]
+        if output_format == "json":
+            print(json.dumps({"deleted": deleted_count}))
+        else:
+            console.print(f"[success]✓[/success] Deleted [bold]{deleted_count}[/bold] job(s).")
+        return
+
+    detail = _extract_error_detail(response)
+    if output_format == "json":
+        print(json.dumps({"error": detail or "Failed to delete jobs", "status_code": response.status_code}))
+    else:
+        console.print(f"[error]Error:[/error] Failed to delete jobs. Status code: {response.status_code}")
+        if detail:
+            console.print(f"[error]Detail:[/error] {detail}")
+    raise typer.Exit(1)
 
 
 @app.command("monitor")

@@ -268,9 +268,30 @@ Add a new compute provider. Interactive prompts by default.
 | `--name <name>` | Provider name |
 | `--type <type>` | Provider type: `slurm`, `skypilot`, `runpod`, `local` |
 | `--config <json>` | Config as JSON string |
-| `--interactive` / `--no-interactive` | Toggle prompts. Non-interactive requires `--name` and `--type`; `--config` also required unless `--type local`. |
+| `--interactive` / `--no-interactive` | Toggle prompts. Non-interactive requires `--name`, `--type`, AND `--config` (pass `'{}'` for `local`). |
 
 **Always use `--no-interactive` with `--name`, `--type`, and `--config` in automated workflows.**
+
+#### Per-type config schema
+
+The shape of `--config` depends on `--type`:
+
+| Type | Config keys |
+|---|---|
+| `local` | (none — pass `{}`) |
+| `skypilot` | `server_url`, `api_token` |
+| `slurm` | `mode` (`ssh` or `rest`); for `ssh`: `ssh_host`, `ssh_user`, `ssh_key_path`, `ssh_port`; for `rest`: `rest_url`, `api_token` |
+| `runpod` | `api_key` (required), `api_base_url`, `default_gpu_type`, `default_region`, `default_template_id`, `default_network_volume_id` |
+
+```bash
+lab provider add --no-interactive --name local --type local --config '{}'
+lab provider add --no-interactive --name sky1 --type skypilot \
+  --config '{"server_url": "https://sky.example.com", "api_token": "TOKEN"}'
+lab provider add --no-interactive --name slurm-ssh --type slurm \
+  --config '{"mode": "ssh", "ssh_host": "cluster.example.com", "ssh_user": "ali", "ssh_key_path": "~/.ssh/id_rsa", "ssh_port": "22"}'
+lab provider add --no-interactive --name rp1 --type runpod \
+  --config '{"api_key": "KEY", "default_gpu_type": "NVIDIA H100"}'
+```
 
 ### `provider update <provider_id>`
 
@@ -288,7 +309,7 @@ Delete a compute provider.
 
 | Option | Description |
 |---|---|
-| `--yes` / `-y` | Skip confirmation prompt. **Always use in automated workflows.** |
+| `--no-interactive` | Skip confirmation prompt. **Always use in automated workflows.** Note: `provider delete` uses `--no-interactive`, NOT `--yes`/`-y` (which is what `model delete` and `dataset delete` use). |
 
 ### `provider check <provider_id>`
 
@@ -301,6 +322,160 @@ Enable a disabled provider.
 ### `provider disable <provider_id>`
 
 Disable a provider.
+
+---
+
+## Model Commands
+
+**Model commands do NOT require `current_experiment`.**
+
+### `model list`
+
+List all model groups on the server.
+
+**JSON output:**
+```json
+[{"group_id": "abc123", "group_name": "my-model", "latest_version_label": "v2", "version_count": 2, "tags": ["latest"]}]
+```
+
+### `model info <group_id>`
+
+Show detailed information about a specific model group. Accepts `group_id` or `group_name`.
+
+### `model create <asset_id>`
+
+Create a new model group and register its first version. The `asset_id` is the underlying model ID (e.g. a HuggingFace model ID). Version label is auto-generated (v1, v2, …).
+
+| Option | Description |
+|---|---|
+| `--name <name>` | Display name for the model group (required) |
+| `--description <text>` | Optional description |
+| `--tag <tag>` | Tag for this version (default: `latest`) |
+
+### `model edit <group_id>`
+
+Edit the name or description of a model group.
+
+| Option | Description |
+|---|---|
+| `--name <name>` | New display name |
+| `--description <text>` | New description |
+
+### `model delete <group_id>`
+
+Delete a model group and all its versions.
+
+| Option | Description |
+|---|---|
+| `--yes` / `-y` | Skip confirmation prompt. **Always use in automated workflows.** |
+
+### `model upload <model_id> <paths...>`
+
+Upload local files or directories to a model on the server. Creates the model if it does not exist. The `model_id` is the identifier used in subsequent `lab model` commands.
+
+| Option | Description |
+|---|---|
+| `--force` | Overwrite files that already exist on the server. |
+
+```bash
+lab model upload my-model ./path/to/model-dir
+lab model upload my-model ./tokenizer.json ./config.json
+lab model upload my-model ./path --force
+```
+
+The server runs a finalize step at the end of `upload` and requires a `config.json` at the root with at least an `architectures` field (`architectures[0]` is recorded as the model architecture). Without it, finalize fails with `cannot finalize: no config.json present. Upload one first.`
+
+Re-running `upload` against the same `model_id` skips files that already exist on the server and exits with code 2 (skipped some, did not fail). Use `--force` to overwrite.
+
+### `model download <model_id> <dest>`
+
+Download every file in a model's directory on the server to `<dest>/<model_id>/`. The destination directory is created if missing.
+
+```bash
+lab model download my-model ./local-models
+```
+
+---
+
+## Dataset Commands
+
+**Dataset commands do NOT require `current_experiment`.**
+
+### `dataset list`
+
+List all dataset groups on the server.
+
+**JSON output:**
+```json
+[{"group_id": "abc123", "group_name": "my-dataset", "latest_version_label": "v1", "version_count": 1, "tags": ["latest"]}]
+```
+
+### `dataset info <group_id>`
+
+Show detailed information about a specific dataset group. Accepts `group_id` or `group_name`.
+
+### `dataset upload <dataset_id> <files...>`
+
+Upload local files to a dataset. Creates the dataset if it does not exist. Accepts `.jsonl`, `.json`, or `.csv` files.
+
+```bash
+lab dataset upload my-dataset train.jsonl eval.jsonl
+```
+
+### `dataset download <dataset_id>`
+
+Download a dataset from the HuggingFace Hub to the server.
+
+| Option | Description |
+|---|---|
+| `--config <name>` | Dataset config/subset name (optional) |
+
+```bash
+lab dataset download Trelis/touch-rugby-rules
+lab dataset download Trelis/touch-rugby-rules --config default
+```
+
+### `dataset edit <group_id>`
+
+Edit the name or description of a dataset group.
+
+| Option | Description |
+|---|---|
+| `--name <name>` | New display name |
+| `--description <text>` | New description |
+
+### `dataset delete <group_id>`
+
+Delete a dataset group and all its versions.
+
+| Option | Description |
+|---|---|
+| `--yes` / `-y` | Skip confirmation prompt. **Always use in automated workflows.** |
+
+---
+
+## Job Publish Commands
+
+**Publish commands require `current_experiment` to be set.**
+
+Publish models or datasets produced by a job to the server registry. Interactive by default — prompts for asset name, group, mode, and tag. Use explicit arguments for non-interactive/agent usage.
+
+### `job publish model <job_id> [model_name]`
+
+Publish a model from a job to the registry.
+
+| Option | Description |
+|---|---|
+| `--group` / `-g <name>` | Registry group name |
+| `--mode <new\|existing>` | Publish as a new group or add version to existing (default: `new`) |
+| `--tag <tag>` | Version tag (default: `latest`) |
+| `--description` / `-d <text>` | Version description |
+
+**Note:** `model_name` is required in `--format json` mode. In pretty mode, omitting it triggers an interactive picker.
+
+### `job publish dataset <job_id> [dataset_name]`
+
+Publish a dataset from a job to the registry. Same options as `job publish model`.
 
 ---
 

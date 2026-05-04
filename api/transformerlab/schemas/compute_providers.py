@@ -36,6 +36,9 @@ class ProviderConfigBase(BaseModel):
     ssh_key_path: Optional[str] = None
     ssh_port: int = 22
 
+    # AWS-specific config
+    region: Optional[str] = None  # AWS region (e.g. "us-east-1")
+
     # Runpod-specific config
     api_key: Optional[str] = None  # Runpod API key (sensitive)
     api_base_url: Optional[str] = None  # Defaults to https://rest.runpod.io/v1
@@ -66,6 +69,7 @@ class ProviderUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     config: Optional[ProviderConfigBase] = None
     disabled: Optional[bool] = None
+    is_default: Optional[bool] = None
 
 
 class ProviderRead(BaseModel):
@@ -80,6 +84,7 @@ class ProviderRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     disabled: bool
+    is_default: bool
 
     class Config:
         from_attributes = True

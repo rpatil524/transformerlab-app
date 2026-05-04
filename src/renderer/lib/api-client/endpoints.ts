@@ -8,36 +8,6 @@ function convertSlashInUrl(url: string) {
   return url.replace(/\//g, '~~~');
 }
 
-Endpoints.Tasks = {
-  List: () => `${API_URL()}tasks/list`,
-  ListByType: (type: string) => `${API_URL()}tasks/list_by_type?type=${type}`,
-  ListByTypeInExperiment: (type: string, experiment_id: string) =>
-    `${API_URL()}tasks/list_by_type_in_experiment?type=${type}&experiment_id=${
-      experiment_id
-    }`,
-  ListBySubtypeInExperiment: (
-    experiment_id: string,
-    subtype: string,
-    remote_task?: boolean,
-  ) =>
-    `${API_URL()}tasks/list_by_subtype_in_experiment?experiment_id=${experiment_id}&subtype=${encodeURIComponent(
-      subtype,
-    )}${remote_task !== undefined ? `&remote_task=${remote_task}` : ''}`,
-  Queue: (id: string) => `${API_URL()}tasks/${id}/queue`,
-  GetByID: (id: string) => `${API_URL()}tasks/${id}/get`,
-  UpdateTask: (id: string) => `${API_URL()}tasks/${id}/update`,
-  DeleteTask: (id: string) => `${API_URL()}tasks/${id}/delete`,
-  Gallery: () => `${API_URL()}tasks/gallery`,
-  ImportFromGallery: (experimentId: string) =>
-    `${API_URL()}tasks/gallery/import`,
-  TeamGallery: () => `${API_URL()}tasks/gallery/team`,
-  ImportFromTeamGallery: (experimentId: string) =>
-    `${API_URL()}tasks/gallery/team/import`,
-  ExportToTeamGallery: () => `${API_URL()}tasks/gallery/team/export`,
-  AddToTeamGallery: () => `${API_URL()}tasks/gallery/team/add`,
-  DeleteFromTeamGallery: () => `${API_URL()}tasks/gallery/team/delete`,
-};
-
 Endpoints.Task = {
   List: (experimentId: string) =>
     `${API_URL()}experiment/${experimentId}/task/list`,
@@ -144,14 +114,25 @@ Endpoints.ComputeProvider = {
   },
   GetSweepResults: (jobId: string) =>
     `${API_URL()}compute_provider/sweep/${jobId}/results`,
-  StopCluster: (providerId: string, clusterName: string) =>
-    `${API_URL()}compute_provider/providers/${providerId}/clusters/${clusterName}/stop`,
+  StopCluster: (
+    providerId: string,
+    clusterName: string,
+    jobId?: string | number,
+  ) => {
+    const base = `${API_URL()}compute_provider/providers/${providerId}/clusters/${clusterName}/stop`;
+    if (jobId === undefined || jobId === null) {
+      return base;
+    }
+    return `${base}?job_id=${encodeURIComponent(String(jobId))}`;
+  },
   UploadTemplateFile: (providerId: string, taskId: string | number) =>
     `${API_URL()}compute_provider/providers/${providerId}/launch/${taskId}/file-upload`,
   UploadTaskFile: (providerId: string, taskId: string | number) =>
     `${API_URL()}compute_provider/providers/${providerId}/launch/${taskId}/file-upload`, // Deprecated: use UploadTemplateFile
   Check: (providerId: string) =>
     `${API_URL()}compute_provider/providers/${providerId}/check`,
+  AwsCredentials: (providerId: string) =>
+    `${API_URL()}compute_provider/providers/${providerId}/aws/credentials`,
   Setup: (providerId: string) =>
     `${API_URL()}compute_provider/providers/${providerId}/setup/`,
   SetupStatus: (providerId: string) =>
@@ -209,6 +190,7 @@ Endpoints.Dataset = {
 
 Endpoints.Models = {
   LocalList: () => `${API_URL()}model/list`,
+  RegistryVersionList: () => `${API_URL()}model/registry_versions`,
   ModelGroups: () => `${API_URL()}model/model_groups_list`,
   GetPeftsForModel: () => `${API_URL()}model/pefts`,
   DeletePeft: (modelId: string, peft: string) =>
@@ -386,7 +368,7 @@ Endpoints.Jobs = {
   ) =>
     `${API_URL()}experiment/${experimentId}/jobs/list?type=${type}&status=${status}`,
   Delete: (experimentId: string, jobId: string) =>
-    `${API_URL()}experiment/${experimentId}/jobs/delete/${jobId}`,
+    `${API_URL()}experiment/${experimentId}/jobs/${jobId}`,
   Stop: (experimentId: string, jobId: string) =>
     `${API_URL()}experiment/${experimentId}/jobs/${jobId}/stop`,
   Update: (experimentId: string, jobId: string, status: string) =>

@@ -1,6 +1,6 @@
 name: video-generation-wan-task
-github_repo_url: https://github.com/transformerlab/transformerlab-examples
-github_repo_dir: video-diffusion
+github_repo_url: https://github.com/transformerlab/transformerlab-app
+github_repo_dir: api/transformerlab/galleries/examples/video-diffusion
 resources:
   accelerators: "A100:1"
 envs:
@@ -16,4 +16,4 @@ parameters:
   num_frames: 81
   guidance_scale: 5.0
   fps: 15
-run: "python ~/video-diffusion/main.py"
+run: "python video-diffusion/main.py"

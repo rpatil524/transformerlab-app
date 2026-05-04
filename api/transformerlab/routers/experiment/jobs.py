@@ -2,6 +2,7 @@ import asyncio
 import csv
 from fnmatch import fnmatch
 import json
+import logging
 import os
 import posixpath
 from typing import List, Optional
@@ -11,6 +12,7 @@ from fastapi import APIRouter, Body, Response, Request, Depends, HTTPException, 
 from fastapi.responses import StreamingResponse, FileResponse
 from json import JSONDecodeError
 from lab import Job, storage
+from lab.job_status import JobStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 from werkzeug.utils import secure_filename
 
@@ -40,6 +42,8 @@ from lab.dirs import (
 from transformerlab.services import asset_version_service
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/jobs", tags=["train"])
 
 
@@ -67,6 +71,30 @@ def _eval_results_storage_path(stored_path: str, eval_dir: str) -> str:
     if parent != canonical:
         return storage.join(eval_dir, basename)
     return p
+
+
+def _job_logs_not_ready_payload(
+    job_data: dict,
+    tail_lines: int,
+    message: str,
+    *,
+    include_request_id: bool = False,
+) -> dict:
+    payload = {
+        "cluster_name": job_data.get("cluster_name"),
+        "provider_id": job_data.get("provider_id"),
+        "provider_job_id": None,
+        "provider_name": job_data.get("provider_name"),
+        "tail_lines": tail_lines,
+        "logs": "",
+        "job_candidates": [],
+        "message": message,
+        "retryable": True,
+        "retry_after_seconds": 10,
+    }
+    if include_request_id:
+        payload["request_id"] = None
+    return payload
 
 
 @router.get("/list")
@@ -98,18 +126,51 @@ async def jobs_get_all(
     return jobs
 
 
-@router.get("/delete/{job_id}")
-async def job_delete(job_id: str, experimentId: str):
-    await job_service.job_delete(job_id, experiment_id=experimentId)
+async def _job_delete_handler(job_id: str, experimentId: str) -> dict:
+    try:
+        await job_service.job_delete(job_id, experiment_id=experimentId)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found in experiment {experimentId}")
+    except Exception as e:
+        logger.exception("Failed to delete job (job_id=%s, experiment=%s)", job_id, experimentId)
+        raise HTTPException(status_code=500, detail=f"Failed to delete job {job_id}: {e}")
     return {"message": "OK"}
 
 
 @router.put("/{job_id}/job_data")
 async def job_update_job_data(job_id: str, experimentId: str, body: dict = Body(...)):
-    """Update user-facing metadata fields in job_data (favorite, hidden, tags)."""
+    """Update user-facing metadata fields in job_data (favorite, hidden, tags, discard)."""
     updates = body.get("updates", {})
-    ALLOWED_KEYS = {"favorite", "hidden", "tags"}
-    filtered = {k: v for k, v in updates.items() if k in ALLOWED_KEYS}
+    allowed_keys = {"favorite", "hidden", "tags", "discard"}
+    filtered = {k: v for k, v in updates.items() if k in allowed_keys}
+
+    # Keep discard under job_data.score.discard to avoid introducing a new top-level field.
+    if "discard" in filtered:
+        raw_discard_value = filtered.pop("discard")
+        if isinstance(raw_discard_value, bool):
+            discard_value = raw_discard_value
+        elif isinstance(raw_discard_value, int):
+            if raw_discard_value not in (0, 1):
+                raise HTTPException(status_code=422, detail="discard must be a boolean value")
+            discard_value = bool(raw_discard_value)
+        elif isinstance(raw_discard_value, str):
+            normalized_discard_value = raw_discard_value.strip().lower()
+            if normalized_discard_value in {"true", "false"}:
+                discard_value = normalized_discard_value == "true"
+            elif normalized_discard_value:
+                try:
+                    numeric_discard_value = int(normalized_discard_value)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail="discard must be a boolean value") from exc
+                if numeric_discard_value not in (0, 1):
+                    raise HTTPException(status_code=422, detail="discard must be a boolean value")
+                discard_value = bool(numeric_discard_value)
+            else:
+                raise HTTPException(status_code=422, detail="discard must be a boolean value")
+        else:
+            raise HTTPException(status_code=422, detail="discard must be a boolean value")
+        await job_service.job_update_job_data_score_field(job_id, "discard", discard_value, experimentId)
+
     if not filtered:
         return {"message": "No valid keys to update"}
     await job_service.job_update_job_data_insert_key_values(job_id, filtered, experimentId)
@@ -149,10 +210,23 @@ async def stop_job(job_id: str, experimentId: str):
     return {"message": "OK"}
 
 
-@router.get("/delete_all")
+async def _job_delete_all_handler(experimentId: str) -> dict:
+    try:
+        deleted = await job_service.job_delete_all(experiment_id=experimentId)
+    except Exception as e:
+        logger.exception("Failed to delete all jobs (experiment=%s)", experimentId)
+        raise HTTPException(status_code=500, detail=f"Failed to delete all jobs: {e}")
+    return {"message": "OK", "deleted": deleted}
+
+
+@router.delete("/delete_all")
 async def job_delete_all(experimentId: str):
-    await job_service.job_delete_all(experiment_id=experimentId)
-    return {"message": "OK"}
+    return await _job_delete_all_handler(experimentId)
+
+
+@router.delete("/{job_id}")
+async def job_delete(job_id: str, experimentId: str):
+    return await _job_delete_handler(job_id, experimentId)
 
 
 @router.get("/{job_id}")
@@ -271,15 +345,25 @@ async def get_provider_job_logs(
         raise HTTPException(status_code=404, detail="Job not found")
 
     job_data = job.get("job_data") or {}
+    job_status = str(job.get("status") or "").upper()
     if not isinstance(job_data, dict):
         try:
             job_data = json.loads(job_data)
         except JSONDecodeError:
             job_data = {}
 
+    def _logs_not_ready_response() -> dict:
+        return _job_logs_not_ready_payload(
+            job_data,
+            tail_lines,
+            "Machine logs are not available yet. Please try again shortly.",
+        )
+
     provider_id = job_data.get("provider_id")
     cluster_name = job_data.get("cluster_name")
     if not provider_id or not cluster_name:
+        if job_status in {JobStatus.LAUNCHING.value, JobStatus.WAITING.value, "CREATED"}:
+            return _logs_not_ready_response()
         raise HTTPException(
             status_code=400, detail="Job does not contain provider metadata (provider_id/cluster_name missing)"
         )
@@ -372,6 +456,8 @@ async def get_provider_job_logs(
             ]
 
     if provider_job_id is None:
+        if job_status in {JobStatus.LAUNCHING.value, JobStatus.WAITING.value, "CREATED"}:
+            return _logs_not_ready_response()
         raise HTTPException(status_code=404, detail="Unable to determine provider job id for this job")
 
     # For local provider, set workspace_dir (job dir) so LocalProvider can read logs.
@@ -437,6 +523,7 @@ async def get_request_logs(
         raise HTTPException(status_code=404, detail="Job not found")
 
     job_data = job.get("job_data") or {}
+    job_status = str(job.get("status") or "").upper()
     if not isinstance(job_data, dict):
         try:
             job_data = json.loads(job_data)
@@ -445,6 +532,13 @@ async def get_request_logs(
 
     provider_id = job_data.get("provider_id")
     if not provider_id:
+        if job_status in {JobStatus.LAUNCHING.value, JobStatus.WAITING.value, "CREATED"}:
+            return _job_logs_not_ready_payload(
+                job_data,
+                tail_lines,
+                "Request logs are not available yet. Please try again shortly.",
+                include_request_id=True,
+            )
         raise HTTPException(status_code=400, detail="Job does not contain provider metadata (provider_id missing)")
 
     provider_launch_result = job_data.get("provider_launch_result")
@@ -454,6 +548,13 @@ async def get_request_logs(
     if not request_id:
         request_id = job_data.get("orchestrator_request_id")
     if not request_id:
+        if job_status in {JobStatus.LAUNCHING.value, JobStatus.WAITING.value, "CREATED"}:
+            return _job_logs_not_ready_payload(
+                job_data,
+                tail_lines,
+                "Request logs are not available yet. Please try again shortly.",
+                include_request_id=True,
+            )
         raise HTTPException(status_code=400, detail="Job does not have a provider request ID")
 
     team_id = user_and_team["team_id"]
@@ -670,6 +771,73 @@ async def get_tunnel_info_for_job(
         "modal_subtitle": modal_subtitle,
         "instructions": instructions,
     }
+
+
+@router.get("/{job_id}/task_logs")
+async def get_job_task_logs(
+    experimentId: str,
+    job_id: str,
+    tail_lines: int = Query(400, ge=100, le=2000),
+    sweeps: bool = False,
+    user_and_team=Depends(get_user_and_team),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    One-shot fetch of a job's task (SDK) output as JSON.
+
+    Returns ``{"logs": "<text>", "tail_lines": N}`` — same envelope as
+    ``/provider_logs``, so scripted/CLI consumers can use the same parsing.
+    The existing ``/stream_output`` endpoint is an open-ended SSE tail
+    intended for the UI; that connection never closes, which makes it
+    unusable from a one-shot HTTP client.
+    """
+    job = await job_service.job_get_cached(job_id, experiment_id=experimentId)
+    if not job or str(job.get("experiment_id")) != str(experimentId):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_data = job.get("job_data") or {}
+    job_status = str(job.get("status") or "").upper()
+    if not isinstance(job_data, dict):
+        try:
+            job_data = json.loads(job_data)
+        except JSONDecodeError:
+            job_data = {}
+
+    output_file_name: Optional[str] = None
+    if sweeps:
+        sweep_file = job_data.get("sweep_output_file")
+        if sweep_file and await storage.exists(sweep_file):
+            output_file_name = sweep_file
+
+    if output_file_name is None:
+        try:
+            output_file_name = await shared.get_job_output_file_name(job_id, experiment_name=experimentId)
+        except (ValueError, FileNotFoundError):
+            if job_status in {JobStatus.LAUNCHING.value, JobStatus.WAITING.value, "CREATED"}:
+                return _job_logs_not_ready_payload(
+                    job_data,
+                    tail_lines,
+                    "Task logs are not available yet. Please try again shortly.",
+                )
+            return {"logs": "", "tail_lines": tail_lines}
+
+    if not await storage.exists(output_file_name):
+        if job_status in {JobStatus.LAUNCHING.value, JobStatus.WAITING.value, "CREATED"}:
+            return _job_logs_not_ready_payload(
+                job_data,
+                tail_lines,
+                "Task logs are not available yet. Please try again shortly.",
+            )
+        return {"logs": "", "tail_lines": tail_lines}
+
+    async with await storage.open(output_file_name, "r") as f:
+        logs_text = await f.read()
+
+    if tail_lines is not None:
+        lines = logs_text.splitlines()
+        logs_text = "\n".join(lines[-tail_lines:])
+
+    return {"logs": logs_text, "tail_lines": tail_lines}
 
 
 @router.get("/{job_id}/stream_output")

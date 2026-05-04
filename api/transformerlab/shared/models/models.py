@@ -132,6 +132,7 @@ class ProviderType(str, enum.Enum):
     RUNPOD = "runpod"
     LOCAL = "local"
     DSTACK = "dstack"
+    AWS = "aws"
 
 
 class AcceleratorType(str, enum.Enum):
@@ -161,6 +162,7 @@ class TeamComputeProvider(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
     disabled: Mapped[bool] = mapped_column(Boolean, server_default="0", nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, server_default="0", nullable=False)
 
     __table_args__ = (Index("idx_compute_provider_name", "team_id", "name"),)
 

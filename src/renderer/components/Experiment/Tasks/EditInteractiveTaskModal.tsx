@@ -38,7 +38,7 @@ type ProviderOption = {
 type ConfigField = {
   field_name: string;
   env_var: string;
-  field_type: 'str' | 'integer';
+  field_type: 'str' | 'integer' | 'model';
   required?: boolean;
   placeholder?: string;
   help_text?: string;
@@ -109,16 +109,15 @@ export default function EditInteractiveTaskModal({
     return [];
   }, [galleryData]);
 
-  // Resolve gallery entry by interactive_gallery_id first, then interactive_type
+  // Resolve gallery entry by interactive_gallery_id.
   const galleryId = (task as any)?.interactive_gallery_id;
 
   // Update templateConfigFields when gallery loads
   React.useEffect(() => {
     if (gallery.length > 0) {
-      const template =
-        (galleryId && gallery.find((t) => (t as any).id === galleryId)) ||
-        (interactiveType &&
-          gallery.find((t) => t.interactive_type === interactiveType));
+      const template = galleryId
+        ? gallery.find((t) => (t as any).id === galleryId)
+        : undefined;
       if (template?.env_parameters) {
         setTemplateConfigFields(template.env_parameters);
       } else {
@@ -399,11 +398,17 @@ export default function EditInteractiveTaskModal({
         body.provider_name = provider.name;
       }
 
-      // Persist model name to history before saving
-      const modelName = configFieldValues['MODEL_NAME'];
-      if (modelName?.trim() && (interactiveType || galleryId)) {
-        const taskTypeOrId = interactiveType || galleryId;
-        saveModelToHistory(getModelHistoryKey(taskTypeOrId), modelName.trim());
+      // Persist all model-type fields to history before saving
+      if (interactiveType) {
+        const historyKey = getModelHistoryKey(interactiveType);
+        templateConfigFields
+          .filter((field) => field.field_type === 'model')
+          .forEach((field) => {
+            const modelValue = configFieldValues[field.env_var];
+            if (modelValue?.trim()) {
+              saveModelToHistory(historyKey, modelValue.trim());
+            }
+          });
       }
 
       // The caller is responsible for actually persisting the changes via API.
@@ -542,14 +547,14 @@ export default function EditInteractiveTaskModal({
                 <>
                   {templateConfigFields.map((field) => {
                     const isNgrokField = field.env_var === 'NGROK_AUTH_TOKEN';
-                    const isModelNameField = field.env_var === 'MODEL_NAME';
+                    const isModelField = field.field_type === 'model';
                     return (
                       <FormControl
                         key={field.env_var}
                         required={field.required && !isNgrokField}
                       >
                         <FormLabel>{field.field_name}</FormLabel>
-                        {isModelNameField ? (
+                        {isModelField ? (
                           <ModelNameInput
                             value={configFieldValues[field.env_var] || ''}
                             onChange={(v) =>

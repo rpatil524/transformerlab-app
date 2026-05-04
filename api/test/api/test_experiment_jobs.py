@@ -30,11 +30,11 @@ def test_job_creation_and_management(client):
     assert resp.status_code in (200, 404)
 
     # Test job delete
-    resp = client.get("/experiment/alpha/jobs/delete/1")
+    resp = client.delete("/experiment/alpha/jobs/1")
     assert resp.status_code in (200, 404)
 
     # Test delete all jobs
-    resp = client.get("/experiment/alpha/jobs/delete_all")
+    resp = client.delete("/experiment/alpha/jobs/delete_all")
     assert resp.status_code == 200
 
 
@@ -55,6 +55,22 @@ def test_job_output_endpoints(client):
     # # Test stream output with sweeps
     # resp = client.get("/experiment/1/jobs/1/stream_output?sweeps=true")
     # assert resp.status_code in (200, 404)
+
+    # One-shot JSON task logs (sibling of SSE /stream_output, used by `lab job task-logs`)
+    resp = client.get("/experiment/1/jobs/1/task_logs")
+    assert resp.status_code in (200, 404)
+    if resp.status_code == 200:
+        body = resp.json()
+        assert "logs" in body
+        assert "tail_lines" in body
+
+    # tail_lines query param respected
+    resp = client.get("/experiment/1/jobs/1/task_logs?tail_lines=200")
+    assert resp.status_code in (200, 404)
+
+    # tail_lines validation: out-of-range should be rejected
+    resp = client.get("/experiment/1/jobs/1/task_logs?tail_lines=10")
+    assert resp.status_code in (400, 422)
 
 
 def test_job_detailed_reports(client):

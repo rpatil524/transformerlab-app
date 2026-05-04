@@ -1,6 +1,6 @@
 name: mlx-audio-tts
-github_repo_url: https://github.com/transformerlab/transformerlab-examples
-github_repo_dir: inference-mlx-audio-tts
+github_repo_url: https://github.com/transformerlab/transformerlab-app
+github_repo_dir: api/transformerlab/galleries/examples/inference-mlx-audio-tts
 resources:
   cpus: 2
   memory: 4
@@ -11,7 +11,7 @@ setup: |
   python -c "import gradio; print('gradio installed at:', gradio.__file__)"
   python -c "import mlx_audio; print('mlx_audio installed at:', mlx_audio.__file__)"
 run: |
-  python ~/inference-mlx-audio-tts/run.py
+  python inference-mlx-audio-tts/run.py
 envs:
   PYTHONUNBUFFERED: "1"
   ESPEAK_DATA_PATH: "/opt/homebrew/share/espeak-ng-data"

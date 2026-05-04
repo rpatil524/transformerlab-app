@@ -4,8 +4,9 @@ import asyncio
 import logging
 import os
 import platform
+import re
 import sys
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -17,6 +18,36 @@ from transformerlab.compute_providers.local import _check_amd_gpu, _check_nvidia
 from transformerlab.shared.models.models import AcceleratorType, ProviderType, Team, TeamComputeProvider, User, UserTeam
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_provider_check_result(check_result: Any) -> tuple[bool, str | None]:
+    """Normalize provider.check() output to (status, reason).
+
+    Providers' check() returns tuple[bool, str | None]; older callers may still
+    receive a bare bool, so accept both shapes.
+    """
+    if isinstance(check_result, tuple) and len(check_result) == 2:
+        is_active, reason = check_result
+        return bool(is_active), str(reason) if reason else None
+    return bool(check_result), None
+
+
+def _short_identifier(value: str, max_len: int = 8) -> str:
+    """Return a compact, stable identifier segment for names like AWS profiles."""
+    normalized = re.sub(r"[^A-Za-z0-9_-]", "-", str(value).lower())
+    normalized = re.sub(r"-+", "-", normalized).strip("-")
+    if not normalized:
+        return "id"
+    if len(normalized) <= max_len:
+        return normalized
+    return normalized[:max_len].rstrip("-") or normalized[:max_len]
+
+
+def build_aws_profile_name(team_id: str, provider_identifier: str) -> str:
+    """Generate a stable AWS profile name unique per org/provider."""
+    short_team = _short_identifier(team_id)
+    short_provider = _short_identifier(provider_identifier)
+    return f"tlab-compute-{short_team}-{short_provider}"
 
 
 def _local_providers_disabled() -> bool:
@@ -257,6 +288,9 @@ def db_record_to_provider_config(
         default_template_id=config_dict.get("default_template_id"),
         default_network_volume_id=config_dict.get("default_network_volume_id"),
         supported_accelerators=config_dict.get("supported_accelerators"),
+        aws_profile=config_dict.get("aws_profile"),
+        region=config_dict.get("region"),
+        team_id=config_dict.get("team_id") or (record.team_id if record.type == ProviderType.AWS.value else None),
         extra_config=extra_config,
     )
     # Local provider has no extra required config; workspace_dir is set at launch from get_workspace_dir()
@@ -458,6 +492,7 @@ async def update_team_provider(
     name: Optional[str] = None,
     config: Optional[dict] = None,
     disabled: Optional[bool] = None,
+    is_default: Optional[bool] = None,
 ) -> TeamComputeProvider:
     """Update an existing team provider record."""
     if name is not None:
@@ -466,9 +501,40 @@ async def update_team_provider(
         provider.config = config
     if disabled is not None:
         provider.disabled = disabled
+    if is_default is not None:
+        if is_default:
+            await _clear_default_for_team(session, provider.team_id, exclude_provider_id=provider.id)
+        provider.is_default = is_default
     await session.commit()
     await session.refresh(provider)
     return provider
+
+
+async def _clear_default_for_team(
+    session: AsyncSession, team_id: str, exclude_provider_id: Optional[str] = None
+) -> None:
+    """Clear is_default on all providers for a team (optionally excluding one)."""
+    stmt = select(TeamComputeProvider).where(
+        TeamComputeProvider.team_id == team_id,
+        TeamComputeProvider.is_default,  # noqa: E712 -- truthy check works for boolean column
+    )
+    if exclude_provider_id is not None:
+        stmt = stmt.where(TeamComputeProvider.id != exclude_provider_id)
+    result = await session.execute(stmt)
+    for other in result.scalars().all():
+        other.is_default = False
+
+
+async def get_default_team_provider(session: AsyncSession, team_id: str) -> Optional[TeamComputeProvider]:
+    """Return the default enabled provider for a team, if one is marked as default."""
+    stmt = (
+        select(TeamComputeProvider)
+        .where(TeamComputeProvider.team_id == team_id)
+        .where(~TeamComputeProvider.disabled)
+        .where(TeamComputeProvider.is_default)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().first()
 
 
 async def delete_team_provider(session: AsyncSession, provider: TeamComputeProvider) -> None:

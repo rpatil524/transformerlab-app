@@ -1,6 +1,6 @@
 import React from 'react';
 import Table from '@mui/joy/Table';
-import ButtonGroup from '@mui/joy/ButtonGroup';
+import Stack from '@mui/joy/Stack';
 import IconButton from '@mui/joy/IconButton';
 import Button from '@mui/joy/Button';
 import Skeleton from '@mui/joy/Skeleton';
@@ -11,6 +11,7 @@ import MenuItem from '@mui/joy/MenuItem';
 import Dropdown from '@mui/joy/Dropdown';
 import Checkbox from '@mui/joy/Checkbox';
 import Tooltip from '@mui/joy/Tooltip';
+import Chip from '@mui/joy/Chip';
 import {
   Trash2Icon,
   LineChartIcon,
@@ -24,6 +25,7 @@ import {
   EyeOffIcon,
   EyeIcon,
   LinkIcon,
+  BanIcon,
 } from 'lucide-react';
 import { Typography } from '@mui/joy';
 import {
@@ -63,12 +65,40 @@ interface JobsListProps {
   onToggleJobSelected?: (jobId: string) => void;
   onToggleFavorite?: (jobId: string, currentValue: boolean) => void;
   onToggleHidden?: (jobId: string, currentValue: boolean) => void;
+  onToggleDiscard?: (jobId: string, currentValue: boolean) => void;
   hideJobId?: boolean;
   showInteractiveType?: boolean;
   showFilesButton?: boolean;
   forceArtifactsButtonVisible?: boolean;
   onStopPendingChange?: (jobId: string, stopPending: boolean) => void;
 }
+
+const parseDiscardValue = (value: unknown): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (value === 0 || value === 1) {
+      return Boolean(value);
+    }
+    return false;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') {
+      return true;
+    }
+    if (normalized === 'false') {
+      return false;
+    }
+    const numeric = Number.parseInt(normalized, 10);
+    if (Number.isNaN(numeric)) {
+      return false;
+    }
+    return numeric === 1;
+  }
+  return false;
+};
 
 const JobsList: React.FC<JobsListProps> = ({
   jobs,
@@ -92,6 +122,7 @@ const JobsList: React.FC<JobsListProps> = ({
   onToggleJobSelected,
   onToggleFavorite,
   onToggleHidden,
+  onToggleDiscard,
   hideJobId = false,
   showInteractiveType = false,
   showFilesButton = true,
@@ -102,6 +133,76 @@ const JobsList: React.FC<JobsListProps> = ({
 
   const showTrackioForStatus = (status?: string): boolean => {
     return String(status || '') === 'RUNNING' || isTerminalJobStatus(status);
+  };
+
+  const formatInteractiveTypeLabel = (type: string): string => {
+    const labels: Record<string, string> = {
+      vscode: 'VS Code',
+      jupyter: 'Jupyter',
+      vllm: 'vLLM',
+      ollama: 'Ollama',
+      ssh: 'SSH',
+      gradio: 'Gradio',
+      custom: 'Custom',
+    };
+    const key = type.toLowerCase();
+    if (labels[key]) return labels[key];
+    return type.charAt(0).toUpperCase() + type.slice(1);
+  };
+
+  const formatScoreValue = (value: number): string => {
+    if (!Number.isFinite(value)) return String(value);
+    if (Math.abs(value) >= 1000) return value.toFixed(1);
+    if (Math.abs(value) >= 100) return value.toFixed(2);
+    if (Math.abs(value) >= 1) return value.toFixed(3);
+    return value.toFixed(4);
+  };
+
+  const getScoreDisplay = (
+    score: unknown,
+  ): { label: string; tooltip?: string } | null => {
+    if (typeof score === 'number') {
+      return { label: `Score: ${formatScoreValue(score)}` };
+    }
+
+    if (typeof score === 'string') {
+      const parsed = Number.parseFloat(score);
+      if (Number.isFinite(parsed)) {
+        return { label: `Score: ${formatScoreValue(parsed)}` };
+      }
+      if (score.trim()) {
+        return { label: `Score: ${score.trim()}` };
+      }
+      return null;
+    }
+
+    if (score && typeof score === 'object') {
+      const numericEntries = Object.entries(score as Record<string, unknown>)
+        .filter(([key]) => key.toLowerCase() !== 'discard')
+        .map(([key, val]) => [key, Number(val)] as const)
+        .filter(([, val]) => Number.isFinite(val));
+
+      if (numericEntries.length === 0) return null;
+
+      const preferredMetric =
+        numericEntries.find(([key]) => key.toLowerCase() === 'score') ??
+        numericEntries[0];
+      const [firstMetric, firstValue] = preferredMetric;
+
+      const tooltip =
+        numericEntries.length > 1
+          ? numericEntries
+              .map(([metric, val]) => `${metric}: ${formatScoreValue(val)}`)
+              .join(' | ')
+          : undefined;
+
+      return {
+        label: `${firstMetric}: ${formatScoreValue(firstValue)}`,
+        tooltip,
+      };
+    }
+
+    return null;
   };
 
   const formatJobConfig = (job: any) => {
@@ -158,6 +259,7 @@ const JobsList: React.FC<JobsListProps> = ({
     const userInfo = jobData.user_info || {};
     const userDisplay = userInfo.name || userInfo.email || '';
     const providerDisplay = jobData.provider_name || job?.provider_name || '';
+    const scoreDisplay = getScoreDisplay(jobData?.score);
 
     if (job?.placeholder) {
       return (
@@ -167,6 +269,55 @@ const JobsList: React.FC<JobsListProps> = ({
         </>
       );
     }
+    // Interactive jobs: show job type, submitter, provider, and title
+    if (showInteractiveType && interactiveType) {
+      const taskName = jobData?.task_name || '';
+      const typeLabel = formatInteractiveTypeLabel(String(interactiveType));
+      return (
+        <>
+          <Typography level="title-sm" fontWeight="bold">
+            {typeLabel}
+            {job?.job_data?.favorite && (
+              <>
+                {' '}
+                <BookmarkIcon size={16} fill="currentColor" />
+              </>
+            )}
+          </Typography>
+          {userDisplay && (
+            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
+              <b>Submitter:</b> {userDisplay}
+            </Typography>
+          )}
+          {providerDisplay && (
+            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
+              <b>Provider:</b> {providerDisplay}
+            </Typography>
+          )}
+          {taskName && (
+            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
+              <b>Title:</b> {taskName}
+            </Typography>
+          )}
+          {scoreDisplay && (
+            <Tooltip
+              title={scoreDisplay.tooltip || ''}
+              disableHoverListener={!scoreDisplay.tooltip}
+            >
+              <Chip
+                size="sm"
+                color="success"
+                variant="soft"
+                sx={{ mt: 0.5, width: 'fit-content' }}
+              >
+                {scoreDisplay.label}
+              </Chip>
+            </Tooltip>
+          )}
+        </>
+      );
+    }
+
     // Build preferred details
     if (clusterName || userDisplay || providerDisplay) {
       return (
@@ -181,17 +332,29 @@ const JobsList: React.FC<JobsListProps> = ({
             </Typography>
           )}
           {userDisplay && (
-            <Typography level="body-sm">{userDisplay}</Typography>
+            <Typography level="body-sm">
+              <b>Submitter:</b> {userDisplay}
+            </Typography>
           )}
           {providerDisplay && (
             <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
               <b>Provider:</b> {providerDisplay}
             </Typography>
           )}
-          {showInteractiveType && interactiveType && (
-            <Typography level="body-xs" sx={{ color: 'text.tertiary' }}>
-              <b>Interactive Type:</b> {String(interactiveType)}
-            </Typography>
+          {scoreDisplay && (
+            <Tooltip
+              title={scoreDisplay.tooltip || ''}
+              disableHoverListener={!scoreDisplay.tooltip}
+            >
+              <Chip
+                size="sm"
+                color="success"
+                variant="soft"
+                sx={{ mt: 0.5, width: 'fit-content' }}
+              >
+                {scoreDisplay.label}
+              </Chip>
+            </Tooltip>
           )}
         </>
       );
@@ -211,9 +374,21 @@ const JobsList: React.FC<JobsListProps> = ({
     return <b>{job.type || 'Unknown Job'}</b>;
   };
 
+  const tableHead = (
+    <thead>
+      <tr>
+        <th>Job ID</th>
+        <th>Job Details</th>
+        <th>Status</th>
+        <th style={{ textAlign: 'right' }}>Logs</th>
+      </tr>
+    </thead>
+  );
+
   if (loading) {
     return (
       <Table style={{ tableLayout: 'auto' }} stickyHeader>
+        {tableHead}
         <tbody>
           {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
             <tr key={i}>
@@ -243,6 +418,7 @@ const JobsList: React.FC<JobsListProps> = ({
 
   return (
     <Table style={{ tableLayout: 'auto' }} stickyHeader>
+      {tableHead}
       <tbody style={{ overflow: 'auto', height: '100%' }}>
         {jobs?.length > 0 ? (
           jobs?.map((job) => {
@@ -298,8 +474,11 @@ const JobsList: React.FC<JobsListProps> = ({
                     border: 'none',
                   }}
                 >
-                  <ButtonGroup
-                    sx={{ justifyContent: 'flex-end', flexWrap: 'wrap' }}
+                  <Stack
+                    direction="row"
+                    gap={0.5}
+                    flexWrap="wrap"
+                    justifyContent="flex-end"
                   >
                     {job?.placeholder && (
                       <Skeleton variant="rectangular" width={100} height={28} />
@@ -314,20 +493,9 @@ const JobsList: React.FC<JobsListProps> = ({
                         disabled={stopPending}
                         startDecorator={<LineChartIcon />}
                       >
-                        <Box
-                          sx={{
-                            display: {
-                              xs: 'none',
-                              sm: 'none',
-                              md: 'inline-flex',
-                            },
-                          }}
-                        >
-                          W&B Tracking
-                        </Box>
+                        W&B Tracking
                       </Button>
                     )}
-
                     {(job?.job_data?.trackio_db_artifact_path ||
                       job?.job_data?.trackio_project_name) &&
                       showTrackioForStatus(job?.status) && (
@@ -338,20 +506,9 @@ const JobsList: React.FC<JobsListProps> = ({
                           disabled={stopPending}
                           startDecorator={<LineChartIcon />}
                         >
-                          <Box
-                            sx={{
-                              display: {
-                                xs: 'none',
-                                sm: 'none',
-                                md: 'inline-flex',
-                              },
-                            }}
-                          >
-                            Trackio
-                          </Box>
+                          Trackio
                         </Button>
                       )}
-
                     {!hideOutputButton && (
                       <Button
                         size="sm"
@@ -360,17 +517,7 @@ const JobsList: React.FC<JobsListProps> = ({
                         disabled={stopPending}
                         startDecorator={<LogsIcon />}
                       >
-                        <Box
-                          sx={{
-                            display: {
-                              xs: 'none',
-                              sm: 'none',
-                              md: 'inline-flex',
-                            },
-                          }}
-                        >
-                          Output
-                        </Box>
+                        Output
                       </Button>
                     )}
                     {job?.job_data?.eval_images_dir && (
@@ -393,17 +540,7 @@ const JobsList: React.FC<JobsListProps> = ({
                           disabled={stopPending}
                           startDecorator={<FileTextIcon />}
                         >
-                          <Box
-                            sx={{
-                              display: {
-                                xs: 'none',
-                                sm: 'none',
-                                md: 'inline-flex',
-                              },
-                            }}
-                          >
-                            Eval Results
-                          </Box>
+                          Eval Results
                         </Button>
                       )}
                     {(forceArtifactsButtonVisible ||
@@ -420,17 +557,7 @@ const JobsList: React.FC<JobsListProps> = ({
                           disabled={stopPending}
                           startDecorator={<ArchiveIcon />}
                         >
-                          <Box
-                            sx={{
-                              display: {
-                                xs: 'none',
-                                sm: 'none',
-                                md: 'inline-flex',
-                              },
-                            }}
-                          >
-                            Artifacts
-                          </Box>
+                          Artifacts
                         </Button>
                       )}
                     {(job?.type === 'SWEEP' || job?.job_data?.sweep_parent) &&
@@ -442,17 +569,7 @@ const JobsList: React.FC<JobsListProps> = ({
                           disabled={stopPending}
                           startDecorator={<LineChartIcon />}
                         >
-                          <Box
-                            sx={{
-                              display: {
-                                xs: 'none',
-                                sm: 'none',
-                                md: 'inline-flex',
-                              },
-                            }}
-                          >
-                            Sweep Results
-                          </Box>
+                          Sweep Results
                         </Button>
                       )}
                     {job?.job_data?.sweep_output_file && (
@@ -484,17 +601,7 @@ const JobsList: React.FC<JobsListProps> = ({
                               disabled={stopPending}
                               startDecorator={<LogsIcon />}
                             >
-                              <Box
-                                sx={{
-                                  display: {
-                                    xs: 'none',
-                                    sm: 'none',
-                                    md: 'inline-flex',
-                                  },
-                                }}
-                              >
-                                Output
-                              </Box>
+                              Output
                             </Button>
                           )}
                         </>
@@ -506,21 +613,8 @@ const JobsList: React.FC<JobsListProps> = ({
                         onClick={() => onViewCheckpoints?.(job?.id)}
                         disabled={stopPending}
                         startDecorator={<WaypointsIcon />}
-                        sx={{
-                          justifyContent: 'center',
-                        }}
                       >
-                        <Box
-                          sx={{
-                            display: {
-                              xs: 'none',
-                              sm: 'none',
-                              md: 'inline-flex',
-                            },
-                          }}
-                        >
-                          Checkpoints
-                        </Box>
+                        Checkpoints
                       </Button>
                     )}
                     {showFilesButton && !job?.placeholder && (
@@ -531,17 +625,7 @@ const JobsList: React.FC<JobsListProps> = ({
                         disabled={stopPending}
                         startDecorator={<FolderOpenIcon />}
                       >
-                        <Box
-                          sx={{
-                            display: {
-                              xs: 'none',
-                              sm: 'none',
-                              md: 'inline-flex',
-                            },
-                          }}
-                        >
-                          Files
-                        </Box>
+                        Files
                       </Button>
                     )}
                     {!job?.placeholder && (
@@ -570,6 +654,7 @@ const JobsList: React.FC<JobsListProps> = ({
                     )}
                     {!job?.placeholder && (
                       <IconButton
+                        size="sm"
                         variant="plain"
                         disabled={
                           stopPending ||
@@ -590,7 +675,11 @@ const JobsList: React.FC<JobsListProps> = ({
                         <MenuButton
                           slots={{ root: IconButton }}
                           slotProps={{
-                            root: { variant: 'plain', color: 'neutral' },
+                            root: {
+                              variant: 'plain',
+                              color: 'neutral',
+                              size: 'sm',
+                            },
                           }}
                           sx={{ minWidth: 0 }}
                           disabled={stopPending}
@@ -635,10 +724,32 @@ const JobsList: React.FC<JobsListProps> = ({
                               </>
                             )}
                           </MenuItem>
+                          <MenuItem
+                            onClick={() =>
+                              onToggleDiscard?.(
+                                String(job.id),
+                                parseDiscardValue(
+                                  job?.job_data?.score?.discard,
+                                ),
+                              )
+                            }
+                          >
+                            {parseDiscardValue(
+                              job?.job_data?.score?.discard,
+                            ) ? (
+                              <>
+                                <BanIcon size={16} /> Unmark discard
+                              </>
+                            ) : (
+                              <>
+                                <BanIcon size={16} /> Mark discard
+                              </>
+                            )}
+                          </MenuItem>
                         </Menu>
                       </Dropdown>
                     )}
-                  </ButtonGroup>
+                  </Stack>
                 </td>
               </tr>
             );

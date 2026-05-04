@@ -14,6 +14,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
 from rich.syntax import Syntax
 
 import transformerlab_cli.util.api as api
+from transformerlab_cli.util import chunked_upload
 from transformerlab_cli.state import cli_state
 from transformerlab_cli.util.config import require_current_experiment
 from transformerlab_cli.util.ui import console, render_object, render_table
@@ -21,6 +22,23 @@ from transformerlab_cli.util.ui import console, render_object, render_table
 app = typer.Typer()
 
 REQUIRED_TASK_FIELDS = ["name", "type"]
+
+
+def _extract_error_detail(response: httpx.Response) -> str:
+    """Extract a human-readable error detail from API responses."""
+    try:
+        payload = response.json()
+    except Exception:
+        return response.text
+
+    detail = payload.get("detail", payload)
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("error") or str(detail)
+        hint = detail.get("hint")
+        return f"{message} ({hint})" if hint else message
+    if isinstance(detail, list):
+        return "; ".join(str(item) for item in detail)
+    return str(detail)
 
 
 def list_tasks(output_format: str = "pretty", experiment_id: str = "alpha") -> None:
@@ -71,10 +89,16 @@ def info_task(task_id: str, experiment_id: str) -> None:
         console.print(f"[error]Error:[/error] Failed to fetch task info. Status code: {response.status_code}")
 
 
-def add_task_from_directory(
-    task_directory_path: str, experiment_id: str, dry_run: bool = False, interactive: bool = True
+def _submit_task_directory(
+    task_directory_path: str,
+    experiment_id: str,
+    endpoint_path: str,
+    success_verb: str,
+    dry_run: bool = False,
+    interactive: bool = True,
+    confirm_prompt: str = "Proceed?",
 ) -> None:
-    """Add a task from a local directory containing task.yaml."""
+    """Upload task directory and submit it to a task endpoint."""
     task_dir = os.path.realpath(task_directory_path)
 
     if not os.path.isdir(task_dir):
@@ -87,29 +111,7 @@ def add_task_from_directory(
         console.print("The directory must contain a task.yaml file.")
         raise typer.Exit(1)
 
-    with open(task_yaml_path, "r", encoding="utf-8") as f:
-        task_yaml_content = f.read()
-
-    try:
-        yaml.safe_load(task_yaml_content)
-    except yaml.YAMLError as e:
-        console.print(f"[error]Error:[/error] Invalid YAML in task.yaml: {e}")
-        raise typer.Exit(1)
-
-    # Validate against server-side task.yaml schema (run, resources, etc.)
-    with console.status("[bold success]Validating task.yaml...[/bold success]", spinner="dots"):
-        response = api.post_text(
-            f"/experiment/{experiment_id}/task/validate",
-            text=task_yaml_content,
-        )
-    if response.status_code != 200:
-        try:
-            detail = response.json().get("detail", response.text)
-        except (ValueError, KeyError):
-            detail = response.text
-        console.print("[error]Error:[/error] task.yaml failed validation.")
-        console.print(f"[error]Detail:[/error] {detail}")
-        raise typer.Exit(1)
+    task_yaml_content = _validate_task_yaml_file(task_yaml_path, experiment_id=experiment_id)
 
     console.print("\n[bold label]Task Configuration (task.yaml):[/bold label]")
     syntax = Syntax(task_yaml_content, "yaml", theme="monokai", line_numbers=True)
@@ -135,14 +137,12 @@ def add_task_from_directory(
         console.print(f"\n[bold label]Files to upload:[/bold label] task.yaml ({_format_size(total_size)})")
 
     if dry_run:
-        console.print("\n[warning]Dry run mode:[/warning] Task would be created but was not submitted.")
+        console.print(f"\n[warning]Dry run mode:[/warning] Task would be {success_verb} but was not submitted.")
         return
 
-    if interactive and cli_state.output_format != "json" and not typer.confirm("\nProceed with task creation?"):
+    if interactive and cli_state.output_format != "json" and not typer.confirm(f"\n{confirm_prompt}"):
         console.print("[warning]Cancelled.[/warning]")
         raise typer.Exit(0)
-
-    CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
 
     tmp_zip = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     tmp_zip_path = tmp_zip.name
@@ -157,20 +157,86 @@ def add_task_from_directory(
                     zf.write(file_path, arcname)
 
         zip_size = os.path.getsize(tmp_zip_path)
+
+        with Progress(
+            TextColumn("[bold success]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            CHUNK_SIZE = 64 * 1024 * 1024  # mirrors api/transformerlab/services/upload_service.py
+            total_chunks = math.ceil(zip_size / CHUNK_SIZE) or 1
+            progress_task = progress.add_task("Uploading", total=total_chunks)
+            try:
+                upload_id = chunked_upload.upload_one_file(
+                    tmp_zip_path,
+                    server_filename="task.zip",
+                    progress=progress,
+                    progress_task=progress_task,
+                )
+            except RuntimeError as exc:
+                console.print(f"[error]Error:[/error] {exc}")
+                raise typer.Exit(1)
+
+        with console.status("[bold success]Submitting task...[/bold success]", spinner="dots"):
+            response = api.post_json(
+                f"/experiment/{experiment_id}/task/{endpoint_path}?upload_id={upload_id}",
+                json_data={},
+                timeout=None,
+            )
+    finally:
+        os.unlink(tmp_zip_path)
+
+    if response.status_code == 200:
+        result = response.json()
+        response_task_id = result.get("id")
+        console.print(f"[success]✓[/success] Task {success_verb} with ID: [bold]{response_task_id}[/bold]")
+    else:
+        console.print(f"[error]Error:[/error] Failed to {success_verb} task. Status code: {response.status_code}")
+        try:
+            detail = response.json().get("detail", response.text)
+            console.print(f"[error]Detail:[/error] {detail}")
+        except Exception:
+            console.print(f"[error]Response:[/error] {response.text}")
+        raise typer.Exit(1)
+
+
+def _upload_path_to_server(path_to_upload: str) -> str:
+    """Create zip upload for a file or directory and return upload_id."""
+    source_path = os.path.realpath(path_to_upload)
+    if not os.path.exists(source_path):
+        console.print(f"[error]Error:[/error] Path not found: {source_path}")
+        raise typer.Exit(1)
+
+    CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
+    tmp_zip = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp_zip_path = tmp_zip.name
+    tmp_zip.close()
+
+    try:
+        with zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            if os.path.isdir(source_path):
+                for root, _dirs, files in os.walk(source_path):
+                    for name in files:
+                        file_path = os.path.join(root, name)
+                        arcname = os.path.relpath(file_path, source_path)
+                        zf.write(file_path, arcname)
+            else:
+                zf.write(source_path, os.path.basename(source_path))
+
+        zip_size = os.path.getsize(tmp_zip_path)
         total_chunks = math.ceil(zip_size / CHUNK_SIZE)
 
         with console.status("[bold success]Initialising upload...[/bold success]", spinner="dots"):
             init_resp = api.post_json(
                 "/upload/init",
-                json_data={"filename": "task.zip", "total_size": zip_size},
+                json_data={"filename": "task-upload.zip", "total_size": zip_size},
             )
         if init_resp.status_code != 200:
             console.print(f"[error]Error:[/error] Upload init failed ({init_resp.status_code})")
             raise typer.Exit(1)
 
         upload_id = init_resp.json()["upload_id"]
-
-        # Check for already-received chunks (resumability)
         status_resp = api.get(f"/upload/{upload_id}/status")
         already_received: set[int] = set(
             status_resp.json().get("received", []) if status_resp.status_code == 200 else []
@@ -211,30 +277,124 @@ def add_task_from_directory(
             console.print(f"[error]Error:[/error] Upload complete failed ({complete_resp.status_code})")
             raise typer.Exit(1)
 
-        with console.status("[bold success]Creating task...[/bold success]", spinner="dots"):
-            response = api.post_json(
-                f"/experiment/{experiment_id}/task/create?upload_id={upload_id}",
-                json_data={},
-                timeout=None,
-            )
+        return upload_id
     finally:
         os.unlink(tmp_zip_path)
 
-    if response.status_code == 200:
-        result = response.json()
-        task_id = result.get("id")
-        console.print(f"[success]✓[/success] Task created with ID: [bold]{task_id}[/bold]")
+
+def add_task_from_directory(
+    task_directory_path: str, experiment_id: str, dry_run: bool = False, interactive: bool = True
+) -> None:
+    """Add a task from a local directory containing task.yaml."""
+    _submit_task_directory(
+        task_directory_path=task_directory_path,
+        experiment_id=experiment_id,
+        endpoint_path="create",
+        success_verb="created",
+        dry_run=dry_run,
+        interactive=interactive,
+        confirm_prompt="Proceed with task creation?",
+    )
+
+
+def edit_task_from_directory(
+    task_id: str, task_directory_path: str, experiment_id: str, dry_run: bool = False, interactive: bool = True
+) -> None:
+    """Edit an existing task from a local directory containing task.yaml."""
+    _submit_task_directory(
+        task_directory_path=task_directory_path,
+        experiment_id=experiment_id,
+        endpoint_path=f"{task_id}/edit",
+        success_verb="updated",
+        dry_run=dry_run,
+        interactive=interactive,
+        confirm_prompt=f"Proceed with task update for {task_id}?",
+    )
+
+
+def edit_task_yaml(
+    task_id: str,
+    experiment_id: str,
+    yaml_file: str | None = None,
+    interactive: bool = True,
+    timeout_seconds: int = 300,
+) -> None:
+    """Edit an existing task's task.yaml."""
+    if yaml_file:
+        yaml_path = os.path.realpath(yaml_file)
+        if not os.path.isfile(yaml_path):
+            console.print(f"[error]Error:[/error] YAML file not found: {yaml_path}")
+            raise typer.Exit(1)
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            edited_yaml = f.read()
     else:
-        console.print(f"[error]Error:[/error] Failed to create task. Status code: {response.status_code}")
-        try:
-            detail = response.json().get("detail", response.text)
-            console.print(f"[error]Detail:[/error] {detail}")
-        except Exception:
-            console.print(f"[error]Response:[/error] {response.text}")
-        raise typer.Exit(1)
+        with console.status("[bold success]Fetching current task.yaml...[/bold success]", spinner="dots"):
+            response = api.get(f"/experiment/{experiment_id}/task/{task_id}/yaml", timeout=float(timeout_seconds))
+        if response.status_code != 200:
+            console.print(f"[error]Error:[/error] Failed to fetch task.yaml. Status code: {response.status_code}")
+            raise typer.Exit(1)
+        current_yaml = response.text
+
+        if interactive and cli_state.output_format != "json":
+            edited = typer.edit(current_yaml)
+            if edited is None:
+                console.print("[warning]Cancelled.[/warning]")
+                raise typer.Exit(0)
+            edited_yaml = edited
+        else:
+            console.print("[error]Error:[/error] Non-interactive mode requires --from-file <path-to-task.yaml>")
+            raise typer.Exit(1)
+
+    _validate_task_yaml_content(edited_yaml, experiment_id=experiment_id, timeout_seconds=timeout_seconds)
+
+    with console.status("[bold success]Saving task.yaml...[/bold success]", spinner="dots"):
+        save_response = api.put(
+            f"/experiment/{experiment_id}/task/{task_id}/yaml",
+            content=edited_yaml.encode("utf-8"),
+            headers={"Content-Type": "text/plain"},
+            timeout=float(timeout_seconds),
+        )
+    if save_response.status_code == 200:
+        console.print(f"[success]✓[/success] Task [bold]{task_id}[/bold] updated.")
+        return
+
+    console.print(f"[error]Error:[/error] Failed to update task. Status code: {save_response.status_code}")
+    try:
+        detail = save_response.json().get("detail", save_response.text)
+        console.print(f"[error]Detail:[/error] {detail}")
+    except Exception:
+        console.print(f"[error]Response:[/error] {save_response.text}")
+    raise typer.Exit(1)
 
 
-def add_task_from_github(repo_url: str, experiment_id: str) -> None:
+def upload_files_to_task(task_id: str, path_to_upload: str, experiment_id: str, interactive: bool = True) -> None:
+    """Upload additional files to an existing task from a file or directory."""
+    source_path = os.path.realpath(path_to_upload)
+    if interactive and cli_state.output_format != "json":
+        if not typer.confirm(f"Upload files from {source_path} to task {task_id}?"):
+            console.print("[warning]Cancelled.[/warning]")
+            raise typer.Exit(0)
+
+    upload_id = _upload_path_to_server(source_path)
+    with console.status("[bold success]Uploading files to task...[/bold success]", spinner="dots"):
+        response = api.post_json(
+            f"/experiment/{experiment_id}/task/{task_id}/upload?upload_id={upload_id}",
+            json_data={},
+            timeout=None,
+        )
+    if response.status_code == 200:
+        console.print(f"[success]✓[/success] Files uploaded to task [bold]{task_id}[/bold].")
+        return
+    console.print(f"[error]Error:[/error] Failed to upload files. Status code: {response.status_code}")
+    try:
+        detail = response.json().get("detail", response.text)
+        console.print(f"[error]Detail:[/error] {detail}")
+    except Exception:
+        console.print(f"[error]Response:[/error] {response.text}")
+    raise typer.Exit(1)
+
+
+def add_task_from_github(repo_url: str, experiment_id: str, interactive: bool = True) -> None:
     """Add a task from a GitHub repository URL."""
     with console.status("[bold success]Creating task from GitHub...[/bold success]", spinner="dots"):
         response = api.post_json(
@@ -250,7 +410,7 @@ def add_task_from_github(repo_url: str, experiment_id: str) -> None:
         except Exception:
             detail = response.text
         if "task.yaml" in str(detail).lower():
-            if cli_state.output_format != "json":
+            if interactive and cli_state.output_format != "json":
                 console.print(
                     "[warning]task.yaml was not found in the repository.[/warning]\n"
                     "You can create a task using a default task.yaml template."
@@ -289,6 +449,68 @@ def _format_size(size_bytes: int) -> str:
             return f"{size_bytes:.1f} {unit}"
         size_bytes //= 1024
     return f"{size_bytes:.1f} TB"
+
+
+def _validate_task_yaml_content(
+    task_yaml_content: str,
+    experiment_id: str,
+    timeout_seconds: int | None = None,
+    output_format: str = "pretty",
+) -> None:
+    try:
+        yaml.safe_load(task_yaml_content)
+    except yaml.YAMLError as e:
+        if output_format == "json":
+            print(json.dumps({"error": f"Invalid YAML in task.yaml: {e}"}))
+        else:
+            console.print(f"[error]Error:[/error] Invalid YAML in task.yaml: {e}")
+        raise typer.Exit(1)
+
+    post_kwargs: dict = {"text": task_yaml_content}
+    if timeout_seconds is not None:
+        post_kwargs["timeout"] = float(timeout_seconds)
+
+    if output_format != "json":
+        with console.status("[bold success]Validating task.yaml...[/bold success]", spinner="dots"):
+            response = api.post_text(f"/experiment/{experiment_id}/task/validate", **post_kwargs)
+    else:
+        response = api.post_text(f"/experiment/{experiment_id}/task/validate", **post_kwargs)
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("detail", response.text)
+        except (ValueError, KeyError):
+            detail = response.text
+        if output_format == "json":
+            print(json.dumps({"error": "task.yaml failed validation", "detail": detail}))
+        else:
+            console.print("[error]Error:[/error] task.yaml failed validation.")
+            console.print(f"[error]Detail:[/error] {detail}")
+        raise typer.Exit(1)
+
+
+def _validate_task_yaml_file(
+    task_yaml_path: str,
+    experiment_id: str,
+    timeout_seconds: int | None = None,
+    output_format: str = "pretty",
+) -> str:
+    if not os.path.isfile(task_yaml_path):
+        if output_format == "json":
+            print(json.dumps({"error": f"task.yaml not found: {task_yaml_path}"}))
+        else:
+            console.print(f"[error]Error:[/error] task.yaml not found: {task_yaml_path}")
+        raise typer.Exit(1)
+
+    with open(task_yaml_path, "r", encoding="utf-8") as f:
+        task_yaml_content = f.read()
+
+    _validate_task_yaml_content(
+        task_yaml_content,
+        experiment_id=experiment_id,
+        timeout_seconds=timeout_seconds,
+        output_format=output_format,
+    )
+    return task_yaml_content
 
 
 ## COMMANDS ##
@@ -466,7 +688,7 @@ def command_task_add(
     current_experiment = require_current_experiment()
 
     if from_git:
-        add_task_from_github(from_git, experiment_id=current_experiment)
+        add_task_from_github(from_git, experiment_id=current_experiment, interactive=not no_interactive)
     elif task_directory:
         add_task_from_directory(
             task_directory, experiment_id=current_experiment, dry_run=dry_run, interactive=not no_interactive
@@ -474,6 +696,61 @@ def command_task_add(
     else:
         console.print("[error]Error:[/error] Provide a task directory path or use --from-git <url>")
         raise typer.Exit(1)
+
+
+@app.command("validate")
+def command_task_validate(
+    task_yaml_path: str = typer.Argument("./task.yaml", help="Path to task.yaml (defaults to ./task.yaml)"),
+    timeout: int = typer.Option(300, "--timeout", help="Request timeout in seconds for validation"),
+):
+    """Validate a task.yaml file against the server schema."""
+    current_experiment = require_current_experiment()
+    resolved_path = os.path.realpath(task_yaml_path)
+    output_format = cli_state.output_format
+    _validate_task_yaml_file(
+        resolved_path,
+        experiment_id=current_experiment,
+        timeout_seconds=timeout,
+        output_format=output_format,
+    )
+    if output_format == "json":
+        print(json.dumps({"ok": True, "path": resolved_path}))
+    else:
+        console.print(f"[success]✓[/success] task.yaml is valid: [bold]{resolved_path}[/bold]")
+
+
+@app.command("edit")
+def command_task_edit(
+    task_id: str = typer.Argument(..., help="Task ID to update"),
+    from_file: str | None = typer.Option(None, "--from-file", help="Path to task.yaml to apply directly"),
+    no_interactive: bool = typer.Option(False, "--no-interactive", help="Skip confirmation prompt"),
+    timeout: int = typer.Option(300, "--timeout", help="Request timeout in seconds for fetch/validate/save"),
+):
+    """Edit an existing task's task.yaml (interactive by default)."""
+    current_experiment = require_current_experiment()
+    edit_task_yaml(
+        task_id=task_id,
+        experiment_id=current_experiment,
+        yaml_file=from_file,
+        interactive=not no_interactive,
+        timeout_seconds=timeout,
+    )
+
+
+@app.command("upload")
+def command_task_upload(
+    task_id: str = typer.Argument(..., help="Task ID to upload files to"),
+    path: str = typer.Argument(..., help="Path to a file or directory to upload"),
+    no_interactive: bool = typer.Option(False, "--no-interactive", help="Skip confirmation prompt"),
+):
+    """Upload additional files into an existing task."""
+    current_experiment = require_current_experiment()
+    upload_files_to_task(
+        task_id=task_id,
+        path_to_upload=path,
+        experiment_id=current_experiment,
+        interactive=not no_interactive,
+    )
 
 
 @app.command("delete")
@@ -679,11 +956,34 @@ def _prompt_parameters(parameters: dict) -> dict:
     return values
 
 
+def _parse_param_overrides(raw_params: list[str] | None) -> dict:
+    """Parse `key=value` strings into a dict, with values as YAML scalars.
+
+    Splits on the first `=` only so values may contain `=`. Raises
+    typer.BadParameter on malformed input.
+    """
+    if not raw_params:
+        return {}
+    parsed: dict = {}
+    for raw in raw_params:
+        if "=" not in raw:
+            raise typer.BadParameter(f"Expected key=value, got: {raw!r}")
+        key, _, value = raw.partition("=")
+        if not key:
+            raise typer.BadParameter(f"Empty key in: {raw!r}")
+        try:
+            parsed[key] = yaml.safe_load(value)
+        except yaml.YAMLError as e:
+            raise typer.BadParameter(f"Failed to parse value for {key!r}: {e}") from e
+    return parsed
+
+
 def queue_task(
     task_id: str,
     experiment_id: str,
     interactive: bool = True,
     description: str | None = None,
+    param_overrides: dict | None = None,
 ) -> None:
     """Queue a task on a compute provider."""
     with console.status("[bold success]Fetching task...[/bold success]", spinner="dots"):
@@ -719,10 +1019,21 @@ def queue_task(
         console.print(f"[dim]Using provider: {provider.get('name')}[/dim]")
 
     parameters = task.get("parameters", {})
+    overrides = param_overrides or {}
+    if overrides:
+        if not parameters:
+            raise typer.BadParameter(
+                "Task has no parameters declared, cannot use --param. Add a `parameters:` block to task.yaml first."
+            )
+        unknown = sorted(set(overrides) - set(parameters))
+        if unknown:
+            valid = ", ".join(sorted(parameters)) or "(none)"
+            raise typer.BadParameter(f"Unknown parameter(s): {', '.join(unknown)}. Valid keys: {valid}")
     if interactive and parameters:
         param_values = _prompt_parameters(parameters)
     else:
         param_values = {k: (v.get("default", "") if isinstance(v, dict) else v) for k, v in parameters.items()}
+    param_values.update(overrides)
 
     payload = build_launch_payload(
         task, provider.get("name"), param_values, resource_overrides, description=description
@@ -752,6 +1063,16 @@ def command_task_queue(
             "Pass '-' to read from stdin."
         ),
     ),
+    params: list[str] = typer.Option(
+        None,
+        "--param",
+        "-p",
+        metavar="KEY=VALUE",
+        help=(
+            "Override a task parameter for this queue (repeatable). Value is parsed as a YAML "
+            "scalar (e.g. score=0.42 -> float, enabled=true -> bool). Unknown keys fail."
+        ),
+    ),
 ):
     """Queue a task on a compute provider."""
     current_experiment = require_current_experiment()
@@ -759,11 +1080,13 @@ def command_task_queue(
         if sys.stdin.isatty():
             raise typer.BadParameter('-m - reads the description from stdin; pipe content in or pass -m "...".')
         description = sys.stdin.read()
+    param_overrides = _parse_param_overrides(params)
     queue_task(
         task_id,
         experiment_id=current_experiment,
         interactive=not no_interactive,
         description=description,
+        param_overrides=param_overrides,
     )
 
 
@@ -848,10 +1171,21 @@ def import_from_gallery(
         else:
             console.print(f"[green]✓[/green] Task imported with ID: [bold]{task_id}[/bold]")
     else:
+        detail = _extract_error_detail(response)
         if output_format == "json":
-            print(json.dumps({"error": f"Failed to import task. Status code: {response.status_code}"}))
+            print(
+                json.dumps(
+                    {
+                        "error": "Failed to import task",
+                        "status_code": response.status_code,
+                        "detail": detail,
+                    }
+                )
+            )
             raise typer.Exit(1)
         console.print(f"[red]Error:[/red] Failed to import task. Status code: {response.status_code}")
+        if detail:
+            console.print(f"[red]Detail:[/red] {detail}")
         raise typer.Exit(1)
 
 
