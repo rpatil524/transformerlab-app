@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { Box, Modal, ModalClose, ModalDialog, Typography } from '@mui/joy';
 import { ResponsiveLine } from '@nivo/line';
-import { isTerminalJobStatus } from 'renderer/lib/utils';
 
 interface JobsChartModalProps {
   open: boolean;
@@ -187,10 +186,13 @@ export default function JobsChartModal({
         const j = job as {
           id?: string | number;
           status?: string;
+          created_at?: string;
           job_data?: {
             score?: unknown;
             description?: unknown;
             discard?: unknown;
+            start_time?: string;
+            end_time?: string;
           };
         };
         const date = extractDate(j);
@@ -228,23 +230,10 @@ export default function JobsChartModal({
         }
 
         if (yValue === null) {
-          kind = 'no_metric';
-          const otherKeys = primaryKey
-            ? Object.keys(fields).filter((k) => k !== primaryKey)
-            : Object.keys(fields);
-          const hasOtherMetrics = otherKeys.length > 0;
-          const terminal = isTerminalJobStatus(j?.status ?? '');
-          if (!terminal) {
-            statusNote = 'Research in progress — no score for this metric yet';
-          } else if (hasOtherMetrics && primaryKey) {
-            statusNote = `No "${primaryKey}" value — this run used other metrics`;
-          } else {
-            statusNote = 'No score recorded for this metric';
-          }
-          if (discarded) {
-            statusNote = `Discarded — ${statusNote}`;
-          }
-        } else if (discarded) {
+          // Hide jobs that don't have a score for this metric.
+          continue;
+        }
+        if (discarded) {
           kind = 'discarded';
         }
 
@@ -275,20 +264,17 @@ export default function JobsChartModal({
       const span = maxY - minY || 1;
       const baseline = minY - span * 0.12;
 
-      const sorted = rows
-        .map((r) => {
-          const y = r.yValue === null ? baseline : r.yValue;
-          return {
-            x: r.x,
-            y,
-            jobId: r.jobId,
-            description: r.description,
-            kind: r.kind,
-            isBest: false,
-            metricLabel: r.metricLabel,
-            statusNote: r.statusNote,
-          } satisfies ChartPoint;
-        })
+      const sorted: ChartPoint[] = rows
+        .map((r) => ({
+          x: r.x,
+          y: r.yValue === null ? baseline : r.yValue,
+          jobId: r.jobId,
+          description: r.description,
+          kind: r.kind,
+          isBest: false,
+          metricLabel: r.metricLabel,
+          statusNote: r.statusNote,
+        }))
         .sort((a, b) => a.x.getTime() - b.x.getTime());
 
       let runningExtreme = lowerBetter ? Infinity : -Infinity;
@@ -397,10 +383,10 @@ export default function JobsChartModal({
                     key={`pt-${i}`}
                     cx={cx}
                     cy={cy}
-                    r={isBest ? 7 : 4}
+                    r={isBest ? 5 : 4}
                     fill={isBest ? BEST_COLOR : POINT_COLOR}
                     stroke={isBest ? BEST_BORDER : 'none'}
-                    strokeWidth={isBest ? 1.5 : 0}
+                    strokeWidth={0}
                   />
                 );
               })
@@ -416,7 +402,7 @@ export default function JobsChartModal({
           primaryMetric
             ? `Metric: ${primaryMetric} — green marks best so far (${lowerIsBetter ? 'lower' : 'higher'} is better)`
             : `Green marks best so far (${lowerIsBetter ? 'lower' : 'higher'} is better)`,
-          'Grey dots are discarded runs or runs without this metric.',
+          'Grey dots are discarded runs.',
         ].join(' ');
 
   return (
@@ -424,7 +410,7 @@ export default function JobsChartModal({
       <ModalDialog sx={{ width: '90vw', maxWidth: '1200px', height: '85vh' }}>
         <ModalClose />
         <Typography level="title-lg" sx={{ mb: 1 }}>
-          Jobs Chart
+          Progress Chart
         </Typography>
         <Typography level="body-sm" sx={{ mb: 2, color: 'text.tertiary' }}>
           {subtitle}
